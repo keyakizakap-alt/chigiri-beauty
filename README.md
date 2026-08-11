@@ -1,1 +1,1 @@
-# CHIGIRI-Beaty
+# chigiri-beaty
