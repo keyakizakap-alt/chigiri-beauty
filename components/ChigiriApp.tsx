@@ -72,6 +72,7 @@ type ChatSession = {
 };
 type MarketFilter = "all" | ProductMarket;
 type CategoryFilter = "all" | ProductCategory;
+type HistorySpecialistFilter = "all" | SpecialistId;
 type PlanFocus = {
   id: string;
   name: string;
@@ -478,6 +479,10 @@ export default function ChigiriApp() {
   const [activeSessionId, setActiveSessionId] = useState("");
   const [historyReady, setHistoryReady] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyReviewOpen, setHistoryReviewOpen] = useState(false);
+  const [historyReviewQuery, setHistoryReviewQuery] = useState("");
+  const [historySpecialistFilter, setHistorySpecialistFilter] = useState<HistorySpecialistFilter>("all");
+  const [reviewSessionId, setReviewSessionId] = useState("");
   const [historySyncState, setHistorySyncState] = useState<"loading" | "saved" | "saving" | "error">("loading");
   const [specialistId, setSpecialistId] = useState<SpecialistId>("skin");
   const [replyModes, setReplyModes] = useState<Record<SpecialistId, ReplyMode>>(() => {
@@ -653,7 +658,7 @@ export default function ChigiriApp() {
     const timer = window.setTimeout(() => {
       setSessions((previous) => {
         const next = [current, ...previous.filter((session) => session.id !== activeSessionId)]
-          .filter((session) => session.messages.some((message) => message.role === "user"));
+          .filter((session) => session.id === activeSessionId || session.messages.some((message) => message.role === "user"));
         storeSessions(historyCacheKey, next);
         return next;
       });
@@ -711,9 +716,22 @@ export default function ChigiriApp() {
   );
   const activeSpecialist = specialists.find((item) => item.id === specialistId) ?? specialists[0];
   const visibleSessions = useMemo(
-    () => sessions.filter((session) => session.specialistId === specialistId),
-    [sessions, specialistId]
+    () => sessions,
+    [sessions]
   );
+  const reviewSessions = useMemo(() => {
+    const query = historyReviewQuery.trim().toLocaleLowerCase("ja-JP");
+    return sessions.filter((session) => {
+      if (historySpecialistFilter !== "all" && session.specialistId !== historySpecialistFilter) return false;
+      if (!query) return true;
+      const searchable = [session.title, ...session.messages.map((message) => message.text)].join(" ").toLocaleLowerCase("ja-JP");
+      return searchable.includes(query);
+    });
+  }, [historyReviewQuery, historySpecialistFilter, sessions]);
+  const reviewSession = reviewSessions.find((session) => session.id === reviewSessionId)
+    ?? sessions.find((session) => session.id === reviewSessionId)
+    ?? reviewSessions[0]
+    ?? null;
   const specialistConditions = useMemo(
     () => conditions.filter((entry) => entry.specialistId === specialistId).sort((a, b) => b.recordedAt.localeCompare(a.recordedAt)),
     [conditions, specialistId]
@@ -1012,6 +1030,19 @@ export default function ChigiriApp() {
     setHistoryOpen(false);
   }
 
+  function openHistoryReview(session?: ChatSession) {
+    const target = session ?? sessions.find((item) => item.id === activeSessionId) ?? sessions[0];
+    setReviewSessionId(target?.id ?? "");
+    setHistoryReviewOpen(true);
+    setHistoryOpen(false);
+  }
+
+  function resumeReviewedSession() {
+    if (!reviewSession) return;
+    openSession(reviewSession);
+    setHistoryReviewOpen(false);
+  }
+
   function chooseSpecialist(nextId: SpecialistId) {
     if (busy || nextId === specialistId) return;
     const firstUserMessage = messages.find((message) => message.role === "user")?.text;
@@ -1150,27 +1181,36 @@ export default function ChigiriApp() {
         <div className="history-panel">
           <div className="history-head">
             <div>
-              <div className="eyebrow">これまでの相談</div>
+              <div className="eyebrow">チャット</div>
               <h3>相談履歴</h3>
             </div>
-            <button type="button" onClick={startNewSession} aria-label="新しい相談を始める">＋</button>
+            <div className="history-head-actions">
+              <button type="button" onClick={startNewSession} aria-label="新しい相談を始める">＋</button>
+            </div>
           </div>
           <div className="history-list">
             {visibleSessions.length ? visibleSessions.map((session) => {
-              const lastMessage = session.messages[session.messages.length - 1]?.text ?? "";
+              const sessionSpecialist = specialists.find((item) => item.id === session.specialistId) ?? specialists[0];
               return (
                 <div
                   key={session.id}
                   className={`history-row ${session.id === activeSessionId ? "active" : ""}`}
                 >
-                  <button type="button" className="history-item" onClick={() => openSession(session)}>
-                    <span className="history-title"><b>{session.title}</b><time>{sessionTime(session.updatedAt)}</time></span>
-                    <span className="history-preview">{lastMessage.replace(/\n/g, " ").slice(0, 42)}</span>
+                  <button
+                    type="button"
+                    className="history-item"
+                    onClick={() => openSession(session)}
+                    aria-current={session.id === activeSessionId ? "page" : undefined}
+                    title={`${session.title} — ${sessionSpecialist.name}`}
+                  >
+                    <span className="history-title"><b>{session.title}</b></span>
+                    <span className="history-item-actions" aria-hidden="true"><span>{sessionSpecialist.name}</span><time>{sessionTime(session.updatedAt)}</time></span>
                   </button>
                 </div>
               );
-            }) : <p className="history-empty">{activeSpecialist.name}との相談を始めると、ここからあとで振り返れます。</p>}
+            }) : <p className="history-empty">相談を始めると、ここにチャット履歴が残ります。</p>}
           </div>
+          {visibleSessions.length ? <button type="button" className="history-review-link" onClick={() => openHistoryReview()}>履歴を検索・すべて見る</button> : null}
           <p className={`history-retention ${historySyncState === "error" ? "error" : ""}`}>
             {historySyncState === "loading" ? "すべての相談ログを読み込んでいます" : historySyncState === "saving" ? "相談内容を保存中" : historySyncState === "error" ? "この端末には保持しています。再同期してください" : "相談ログは削除せず、すべて保存します"}
           </p>
@@ -1188,6 +1228,7 @@ export default function ChigiriApp() {
             <div className="status">{activeSpecialist.name} · {activeSpecialist.role}</div>
           </div>
           <div className="topbar-actions">
+            <button className="utility-button history-review-button" onClick={() => openHistoryReview()}>相談ログ</button>
             <button className="utility-button plan-button" onClick={() => setPlanOpen(true)}>今日のプラン</button>
             <button className="utility-button condition-button" onClick={() => setConditionOpen(true)}>今日の調子</button>
             <button className="utility-button shelf-button" onClick={() => setShelfOpen(true)}>マイアイテム{selectedIds.length + customItems.length ? ` ${selectedIds.length + customItems.length}` : ""}</button>
@@ -1337,8 +1378,8 @@ export default function ChigiriApp() {
                       className={`product-option ${selectedIds.includes(product.id) ? "selected" : ""}`}
                       onClick={() => toggleProduct(product.id)}
                     >
-                      <b>{product.brand} · {marketOf(product) === "JP" ? "日本" : "韓国"} · {categoryLabels[product.category]}</b>
-                      <span>{product.name}</span>
+                      <b>{product.brand}<small>｜ {product.name}</small></b>
+                      <span>{marketOf(product) === "JP" ? "日本" : "韓国"} · {categoryLabels[product.category]}</span>
                     </button>
                   ))}
                   {!specialistVisibleProducts.length && (
@@ -1504,6 +1545,68 @@ export default function ChigiriApp() {
           <div className="privacy">名前・住所などの個人情報は入力しないでください。強い症状があるときは医療機関へご相談ください。</div>
         </div>
       </main>
+
+      {historyReviewOpen && (
+        <div className="history-review-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryReviewOpen(false); }}>
+          <section className="history-review-dialog" role="dialog" aria-modal="true" aria-labelledby="history-review-title">
+            <header className="history-review-header">
+              <div>
+                <div className="eyebrow">Consultation log</div>
+                <h2 id="history-review-title">これまでの相談を見返す</h2>
+                <p>相談内容と回答を、会話の流れのまま確認できます。</p>
+              </div>
+              <button type="button" className="close" onClick={() => setHistoryReviewOpen(false)} aria-label="相談ログを閉じる">×</button>
+            </header>
+
+            <div className="history-review-tools">
+              <input type="search" value={historyReviewQuery} onChange={(event) => setHistoryReviewQuery(event.target.value)} placeholder="相談内容を検索" aria-label="相談ログを検索" />
+              <div className="history-specialist-filters" aria-label="担当者で絞り込む">
+                <button type="button" className={historySpecialistFilter === "all" ? "active" : ""} onClick={() => setHistorySpecialistFilter("all")}>すべて</button>
+                {specialists.map((specialist) => <button type="button" key={specialist.id} className={historySpecialistFilter === specialist.id ? "active" : ""} onClick={() => setHistorySpecialistFilter(specialist.id)}>{specialist.name}</button>)}
+              </div>
+            </div>
+
+            <div className="history-review-layout">
+              <nav className="history-review-list" aria-label="保存済みの相談ログ">
+                <div className="history-review-count">{reviewSessions.length}件の相談</div>
+                {reviewSessions.length ? reviewSessions.map((session) => {
+                  const specialist = specialists.find((item) => item.id === session.specialistId) ?? specialists[0];
+                  const userTurns = session.messages.filter((message) => message.role === "user").length;
+                  return <button type="button" key={session.id} className={reviewSession?.id === session.id ? "active" : ""} onClick={() => setReviewSessionId(session.id)} aria-pressed={reviewSession?.id === session.id}>
+                    <span><b>{specialist.name}</b><time>{new Intl.DateTimeFormat("ja-JP", { year: "numeric", month: "short", day: "numeric" }).format(new Date(session.updatedAt))}</time></span>
+                    <strong>{session.title}</strong>
+                    <small>{userTurns}往復 · {session.messages.at(-1)?.text.replace(/\n/g, " ").slice(0, 46)}</small>
+                  </button>;
+                }) : <p className="history-review-empty">条件に合う相談ログはありません。</p>}
+              </nav>
+
+              <article className="history-transcript" aria-live="polite">
+                {reviewSession ? <>
+                  <div className="history-transcript-head">
+                    <div>
+                      <span>{specialists.find((item) => item.id === reviewSession.specialistId)?.name} · {specialists.find((item) => item.id === reviewSession.specialistId)?.role}</span>
+                      <h3>{reviewSession.title}</h3>
+                      <time>{new Intl.DateTimeFormat("ja-JP", { dateStyle: "long", timeStyle: "short" }).format(new Date(reviewSession.updatedAt))}</time>
+                    </div>
+                    <button type="button" onClick={resumeReviewedSession}>この相談を再開</button>
+                  </div>
+                  <div className="history-transcript-messages">
+                    {reviewSession.messages.map((message) => <div className={`history-transcript-message ${message.role}`} key={message.id}>
+                      <span>{message.role === "user" ? "あなた" : specialists.find((item) => item.id === reviewSession.specialistId)?.name}</span>
+                      <div>{message.text}</div>
+                      {!!message.recommendedProducts?.length && <section className="history-transcript-products" aria-label="この回答で提案した商品">
+                        <b>この回答で提案した商品</b>
+                        {message.recommendedProducts.map((product) => <button type="button" key={product.id} onClick={() => { setHistoryReviewOpen(false); openProductInsight(product.id); }}><span>{product.brand}</span>{product.name}</button>)}
+                      </section>}
+                      <time>{message.time}</time>
+                    </div>)}
+                  </div>
+                </> : <div className="history-transcript-placeholder"><b>相談ログを選択してください</b><span>左の一覧から、読み返したい相談を選べます。</span></div>}
+              </article>
+            </div>
+          </section>
+        </div>
+      )}
 
       {planOpen && (
         <aside className="catalog-panel daily-plan-panel" aria-label="今日のビューティープラン">
