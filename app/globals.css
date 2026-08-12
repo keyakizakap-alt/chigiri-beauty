@@ -262,7 +262,8 @@ button { cursor: pointer; }
 .product-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; max-height: 420px; overflow-y: auto; padding-right: 4px; scrollbar-width: thin; }
 .product-option { padding: 12px; text-align: left; border: 1px solid var(--line); border-radius: 15px; background: white; transition: .18s ease; }
 .product-option.selected { border-color: #557c68; background: #edf3ee; box-shadow: inset 0 0 0 1px #557c68; }
-.product-option b { display: block; font-size: 11px; margin-bottom: 3px; }
+.product-option b { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px; font-size: 11px; margin-bottom: 4px; }
+.product-option b small { color: #30463b; font-size: inherit; font-weight: 650; }
 .product-option span { display: block; color: var(--muted); font-size: 10px; line-height: 1.4; }
 .no-products { grid-column: 1 / -1; margin: 0; padding: 26px 12px; color: var(--muted); text-align: center; font-size: 10px; line-height: 1.7; }
 .picker-actions { margin-top: 12px; display: grid; grid-template-columns: auto 1fr; gap: 8px; }

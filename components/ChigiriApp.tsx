@@ -658,7 +658,7 @@ export default function ChigiriApp() {
     const timer = window.setTimeout(() => {
       setSessions((previous) => {
         const next = [current, ...previous.filter((session) => session.id !== activeSessionId)]
-          .filter((session) => session.messages.some((message) => message.role === "user"));
+          .filter((session) => session.id === activeSessionId || session.messages.some((message) => message.role === "user"));
         storeSessions(historyCacheKey, next);
         return next;
       });
@@ -1378,8 +1378,8 @@ export default function ChigiriApp() {
                       className={`product-option ${selectedIds.includes(product.id) ? "selected" : ""}`}
                       onClick={() => toggleProduct(product.id)}
                     >
-                      <b>{product.brand} · {marketOf(product) === "JP" ? "日本" : "韓国"} · {categoryLabels[product.category]}</b>
-                      <span>{product.name}</span>
+                      <b>{product.brand}<small>｜ {product.name}</small></b>
+                      <span>{marketOf(product) === "JP" ? "日本" : "韓国"} · {categoryLabels[product.category]}</span>
                     </button>
                   ))}
                   {!specialistVisibleProducts.length && (

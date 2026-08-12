@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const component = await readFile(new URL("../components/ChigiriApp.tsx", import.meta.url), "utf8");
+const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const apiRoute = await readFile(new URL("../app/api/chat/route.ts", import.meta.url), "utf8");
 const router = await readFile(new URL("../server/orca.ts", import.meta.url), "utf8");
 const consultationApi = await readFile(new URL("../app/api/consultations/route.ts", import.meta.url), "utf8");
@@ -72,6 +73,16 @@ test("keeps every consultation directly accessible in the sidebar", () => {
   assert.match(component, /aria-current=\{session\.id === activeSessionId/);
   assert.match(component, /履歴を検索・すべて見る/);
   assert.doesNotMatch(component, /className="history-preview"/);
+});
+
+test("shows the active consultation even before the first user message", () => {
+  assert.match(component, /session\.id === activeSessionId \|\| session\.messages\.some/);
+  assert.match(component, /新しい美容相談/);
+});
+
+test("shows the product name beside its maker in inventory choices", () => {
+  assert.match(component, /<b>\{product\.brand\}<small>｜ \{product\.name\}<\/small><\/b>/);
+  assert.match(styles, /\.product-option b small/);
 });
 
 test("keeps consultation logs immutable in the customer UI", () => {
