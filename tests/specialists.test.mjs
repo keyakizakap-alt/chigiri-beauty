@@ -12,6 +12,8 @@ const checkInApi = await readFile(new URL("../app/api/check-ins/route.ts", impor
 const uploadApi = await readFile(new URL("../app/api/uploads/route.ts", import.meta.url), "utf8");
 const schema = await readFile(new URL("../db/schema.ts", import.meta.url), "utf8");
 const dbSource = await readFile(new URL("../db/index.ts", import.meta.url), "utf8");
+const ownedItemApi = await readFile(new URL("../app/api/owned-items/route.ts", import.meta.url), "utf8");
+const officialImages = await readFile(new URL("../data/official-product-images.ts", import.meta.url), "utf8");
 const conversationContext = await import(new URL("../server/conversation-context.mjs", import.meta.url));
 const quickReplies = await import(new URL("../server/quick-replies.mjs", import.meta.url));
 
@@ -26,8 +28,8 @@ test("opens each specialist on a fresh chat while keeping history available", ()
   assert.doesNotMatch(component, /const latest = \[\.\.\.valid\]/);
   assert.doesNotMatch(component, /const destination = saved\.find/);
   assert.match(component, /setActiveSessionId\(createSessionId\(\)\)/);
-  assert.match(component, /visibilitychange/);
-  assert.match(component, /Date\.now\(\) - backgroundedAt >= 30_000/);
+  assert.doesNotMatch(component, /visibilitychange/);
+  assert.doesNotMatch(component, /backgroundedAtRef/);
   assert.doesNotMatch(component, /setMessages\(\(current\) => \[\.\.\.current, initialMessageFor\(nextId\)\]\)/);
 });
 
@@ -39,7 +41,7 @@ test("shows a short branded splash screen on launch", () => {
 
 test("persists consultation logs without a client-side retention cap", () => {
   assert.match(component, /fetch\("\/api\/consultations"/);
-  assert.match(component, /相談内容はいつでも見返せます/);
+  assert.match(component, /相談ログは削除せず、すべて保存します/);
   assert.match(consultationApi, /chatSessions/);
   assert.match(consultationApi, /pageSize = 40/);
   assert.doesNotMatch(component, /\.slice\(0, 40\)/);
@@ -50,14 +52,15 @@ test("persists consultation logs without a client-side retention cap", () => {
   assert.match(consultationApi, /ensureChatSessionStorage/);
   assert.match(dbSource, /CREATE TABLE IF NOT EXISTS chat_sessions/);
   assert.match(dbSource, /d1\.batch/);
+  assert.match(consultationApi, /mergeMessages/);
+  assert.match(component, /while \(cursor !== null\)/);
 });
 
-test("lets the owner delete a selected log and its attached images", () => {
-  assert.match(component, /deleteSession\(session/);
-  assert.match(component, /この操作は取り消せません/);
-  assert.match(component, /method: "DELETE"/);
-  assert.match(consultationApi, /deletedChatSessions/);
-  assert.match(consultationApi, /env\.BUCKET\.delete\(\[\.\.\.new Set\(references\.keys\)\]\)/);
+test("keeps consultation logs immutable in the customer UI", () => {
+  assert.doesNotMatch(component, /deleteSession\(session/);
+  assert.doesNotMatch(component, /history-delete/);
+  assert.doesNotMatch(consultationApi, /export async function DELETE/);
+  assert.match(consultationApi, /mergeMessages\(previous\.messages/);
   assert.match(consultationApi, /eq\(chatSessions\.ownerKey, owner\.key\)/);
 });
 
@@ -65,7 +68,8 @@ test("uses adaptive conversation rules without exposing internal comparison", ()
   assert.match(router, /直前2回のアシスタント発言/);
   assert.match(router, /3案を比較/);
   assert.match(router, /比較過程や内部推論は出力しません/);
-  assert.match(router, /temperature: 0\.68/);
+  assert.match(router, /reasoningEffort: "medium"/);
+  assert.match(router, /カウンセラーのように/);
 });
 
 test("concierges listen across several turns before showing products", () => {
@@ -170,7 +174,9 @@ test("saves optional beauty conditions and lets the owner delete them", () => {
 test("passes owned items and cross-specialist conditions into the concierge", () => {
   assert.match(component, /ownedProductIds: selectedIds/);
   assert.match(component, /conditions: latestConditions/);
-  assert.match(router, /手持ちアイテム（最優先で活用）/);
+  assert.match(router, /公式確認済みの手持ち（最優先で活用）/);
+  assert.match(component, /customOwnedItems: customItems/);
+  assert.match(router, /ユーザーが自己登録した手持ち/);
   assert.match(router, /美容領域をまたいだ最近のコンディション/);
   assert.match(component, /今日やることは、これだけ/);
   assert.match(component, /肌・髪・ボディなどを別々に終わらせず/);
@@ -184,14 +190,26 @@ test("keeps uploaded images private and owner-scoped", () => {
   assert.match(component, /method: "DELETE"/);
 });
 
-test("uses guided intake to reduce LLM calls and keeps prompts bounded", () => {
-  assert.match(router, /assessment\.phase === "listen"/);
+test("uses OrcaRouter from the first conversational turn and keeps prompts bounded", () => {
+  assert.doesNotMatch(router, /assessment\.phase === "listen" \|\|/);
   assert.match(router, /mode: "guided-intake"/);
   assert.match(router, /history\.slice\(-12\)/);
   assert.match(apiRoute, /\.slice\(-20\)/);
   assert.match(component, /askedContextKeys/);
-  assert.match(router, /max_tokens: 320/);
+  assert.match(router, /max_completion_tokens: responseSettings\.maxCompletionTokens/);
+  assert.match(router, /reasoning_effort: responseSettings\.reasoningEffort/);
   assert.match(component, /基本のケア案内でお返ししています/);
+});
+
+test("supports per-specialist reply modes, user-owned items, and 20 fixed official images", () => {
+  for (const label of ["すぐ回答", "自然な相談", "じっくり分析"]) assert.match(component, new RegExp(label));
+  assert.match(component, /\[specialistId\]: mode\.id/);
+  assert.match(apiRoute, /allowedReplyModes/);
+  assert.match(schema, /ownedItems/);
+  assert.match(ownedItemApi, /export async function POST/);
+  assert.match(component, /手元の商品を自分で追加/);
+  assert.equal((officialImages.match(/^  "[^"]+": "https:\/\//gm) ?? []).length, 20);
+  assert.doesNotMatch(component, /\/api\/product-image/);
 });
 
 test("compact conversation memory survives beyond the recent message window", () => {
@@ -267,6 +285,17 @@ test("hair concern does not masquerade as a styling preference", () => {
   const hair = conversationContext.deriveConversationContext("hair", "朝に髪が広がってまとまりません", []);
   assert.deepEqual(hair.knownKeys, ["concern"]);
   assert.equal(hair.nextQuestion, "カラーやアイロンは、普段どのくらい使いますか？");
+});
+
+test("fallback reflection keeps multiple user constraints in one natural response", () => {
+  assert.equal(
+    conversationContext.reflectSpecialistConcern("hair", "朝は髪が広がるけど、重いオイルは苦手です"),
+    "朝に髪の広がり・まとまりにくさを整えたい一方で、重いオイルは避けたいんですね。",
+  );
+  assert.equal(
+    conversationContext.reflectSpecialistConcern("makeup", "ライブでリップの色落ちを防ぎたい"),
+    "ライブやイベントで使うリップの、色落ちを整えたいんですね。",
+  );
 });
 
 test("skin, body and nail short answers advance from the latest category question", () => {

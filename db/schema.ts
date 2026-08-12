@@ -41,6 +41,20 @@ export const chatSessions = sqliteTable("chat_sessions", {
   index("chat_sessions_owner_specialist_updated_idx").on(table.ownerKey, table.specialistId, table.updatedAt),
 ]);
 
+export const ownedItems = sqliteTable("owned_items", {
+  ownerKey: text("owner_key").notNull(),
+  id: text("id").notNull(),
+  brand: text("brand").notNull().default(""),
+  name: text("name").notNull(),
+  category: text("category").notNull(),
+  note: text("note"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  primaryKey({ columns: [table.ownerKey, table.id] }),
+  index("owned_items_owner_updated_idx").on(table.ownerKey, table.updatedAt),
+]);
+
 export const deletedChatSessions = sqliteTable("deleted_chat_sessions", {
   ownerKey: text("owner_key").notNull(),
   id: text("id").notNull(),
