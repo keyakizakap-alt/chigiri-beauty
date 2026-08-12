@@ -294,6 +294,21 @@ function removeCachedSession(key: string, id: string) {
   storeSessions(key, storedSessions(key).filter((session) => session.id !== id));
 }
 
+/**
+ * 相談ログは全担当まとめて1回で取得する。表示は担当ごとに絞り込むだけなので、
+ * 担当別に5本投げる必要はなく、1本でも失敗すると履歴が丸ごと空に見える事故も防げる。
+ */
+async function fetchHistoryPage(cursor?: string | null) {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  const response = await fetch(`/api/consultations${query}`, { credentials: "same-origin" });
+  if (!response.ok) throw new Error("history load failed");
+  const data = await response.json() as { sessions?: ChatSession[]; nextCursor?: string | null };
+  return {
+    sessions: (data.sessions ?? []).filter((session) => session?.id && session.messages?.length),
+    nextCursor: data.nextCursor ?? null,
+  };
+}
+
 async function syncSessionBatch(sessions: ChatSession[]) {
   for (let offset = 0; offset < sessions.length; offset += 50) {
     const response = await fetch("/api/consultations", {
@@ -445,8 +460,12 @@ export default function ChigiriApp() {
   const [activeSessionId, setActiveSessionId] = useState("");
   const [historyReady, setHistoryReady] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyCursors, setHistoryCursors] = useState<Partial<Record<SpecialistId, string | null>>>({});
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [historySyncState, setHistorySyncState] = useState<"loading" | "saved" | "saving" | "error">("loading");
+  // 「保存できていない」と「読み込めなかった」は別の状態。混ぜると、サーバーには
+  // 履歴があるのに「この端末には保持しています」と案内してしまう。
+  const [historyLoadFailed, setHistoryLoadFailed] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [deletingSessionId, setDeletingSessionId] = useState("");
   const [specialistId, setSpecialistId] = useState<SpecialistId>("skin");
   const [productQuery, setProductQuery] = useState("");
@@ -518,10 +537,11 @@ export default function ChigiriApp() {
       void (async () => {
         const cached = mergeSessions(storedSessions(historyCacheKey), storedSessions(historyOutboxKey));
         if (cached.length) setSessions(cached);
+
+        // 旧バージョンのローカル保存からの移行。ここで失敗しても読み込みは続ける。
+        const currentSource = localStorage.getItem(chatStorageKey);
+        let migratable: ChatSession[] = [];
         try {
-          const pending = storedSessions(historyOutboxKey);
-          const currentSource = localStorage.getItem(chatStorageKey);
-          let migratable: ChatSession[] = [];
           if (currentSource) {
             const stored = JSON.parse(currentSource) as Array<Omit<ChatSession, "specialistId"> & { specialistId?: SpecialistId }>;
             migratable = stored.filter((session) => session.id && session.messages?.length).map((session) => {
@@ -534,38 +554,42 @@ export default function ChigiriApp() {
               cacheSession(historyOutboxKey, session);
             }
           }
+        } catch {
+          migratable = [];
+        }
 
-          const loadFor = async (specialist: (typeof specialists)[number]) => {
-            const response = await fetch(`/api/consultations?specialist=${specialist.id}`, { credentials: "same-origin" });
-            if (!response.ok) throw new Error("history load failed");
-            const data = await response.json() as { sessions?: ChatSession[]; nextCursor?: string | null };
-            return { specialistId: specialist.id, sessions: data.sessions ?? [], nextCursor: data.nextCursor ?? null };
-          };
-          // The first request establishes the anonymous HttpOnly owner cookie when
-          // ChatGPT account headers are unavailable. Later requests can then share it.
-          const firstLoaded = await loadFor(specialists[0]);
-          const loaded = [firstLoaded, ...(await Promise.all(specialists.slice(1).map(loadFor)))];
-          const valid = loaded.flatMap((group) => group.sessions).filter((session) => session.id && session.messages?.length);
-          const combined = mergeSessions(valid, cached, migratable);
-          setHistoryCursors(Object.fromEntries(loaded.map((group) => [group.specialistId, group.nextCursor])));
+        setHistoryLoading(true);
+        try {
+          const page = await fetchHistoryPage();
+          const combined = mergeSessions(page.sessions, cached, migratable);
           setSessions(combined);
           storeSessions(historyCacheKey, combined);
-          const queued = mergeSessions(pending, migratable);
+          setHistoryCursor(page.nextCursor);
+          setHistoryLoadFailed(false);
+        } catch {
+          // 読み込みに失敗しても、この端末に残っている分は表示したままにする。
+          setHistoryLoadFailed(true);
+        } finally {
+          setHistoryLoading(false);
+        }
+
+        // 未送信分の再送。読み込みとは独立させ、片方の失敗がもう片方を巻き込まないようにする。
+        try {
+          const queued = mergeSessions(storedSessions(historyOutboxKey), migratable);
           if (queued.length) {
             await syncSessionBatch(queued);
             storeSessions(historyOutboxKey, []);
           }
           if (currentSource) localStorage.removeItem(chatStorageKey);
-          // Keep past consultations available, but always open on a fresh chat.
-          // A previous conversation resumes only when the user selects it.
-          setActiveSessionId(createSessionId());
           setHistorySyncState("saved");
         } catch {
-          setActiveSessionId(createSessionId());
           setHistorySyncState("error");
-        } finally {
-          setHistoryReady(true);
         }
+
+        // Keep past consultations available, but always open on a fresh chat.
+        // A previous conversation resumes only when the user selects it.
+        setActiveSessionId(createSessionId());
+        setHistoryReady(true);
       })();
     }, 0);
     return () => window.clearTimeout(timer);
@@ -985,21 +1009,23 @@ export default function ChigiriApp() {
     setServiceNotice("");
   }
 
-  async function loadMoreHistory() {
-    const cursor = historyCursors[specialistId];
-    if (!cursor) return;
+  /** 相談履歴の読み込み。初回・再試行・追加読み込みで共通に使う。 */
+  async function loadHistory(cursor?: string | null) {
+    if (historyLoading) return;
+    setHistoryLoading(true);
     try {
-      const response = await fetch(`/api/consultations?specialist=${specialistId}&cursor=${encodeURIComponent(cursor)}`, { credentials: "same-origin" });
-      if (!response.ok) throw new Error("history load failed");
-      const data = await response.json() as { sessions?: ChatSession[]; nextCursor?: string | null };
+      const page = await fetchHistoryPage(cursor);
       setSessions((current) => {
-        const next = mergeSessions(current, data.sessions ?? []);
+        const next = mergeSessions(page.sessions, current);
         storeSessions(historyCacheKey, next);
         return next;
       });
-      setHistoryCursors((current) => ({ ...current, [specialistId]: data.nextCursor ?? null }));
+      setHistoryCursor(page.nextCursor);
+      setHistoryLoadFailed(false);
     } catch {
-      window.alert("過去の相談ログを読み込めませんでした。通信状態を確認して、もう一度お試しください。");
+      setHistoryLoadFailed(true);
+    } finally {
+      setHistoryLoading(false);
     }
   }
 
@@ -1113,13 +1139,26 @@ export default function ChigiriApp() {
                   <button type="button" className="history-delete" onClick={() => void deleteSession(session)} disabled={deletingSessionId === session.id} aria-label={`${session.title}を削除`} title="この相談ログを削除">{deletingSessionId === session.id ? "…" : "×"}</button>
                 </div>
               );
-            }) : <p className="history-empty">{activeSpecialist.name}との相談を始めると、ここからあとで振り返れます。</p>}
-            {historyCursors[specialistId] ? <button type="button" className="history-more" onClick={() => void loadMoreHistory()}>過去のログをさらに表示</button> : null}
+            }) : historyLoading ? <p className="history-empty">相談履歴を読み込んでいます…</p>
+              : historyLoadFailed ? null
+                : <p className="history-empty">{activeSpecialist.name}との相談を始めると、ここからあとで振り返れます。</p>}
+            {historyCursor && !historyLoadFailed ? <button type="button" className="history-more" onClick={() => void loadHistory(historyCursor)} disabled={historyLoading}>過去のログをさらに表示</button> : null}
           </div>
-          <p className={`history-retention ${historySyncState === "error" ? "error" : ""}`}>
-            {historySyncState === "loading" ? "相談履歴を読み込んでいます" : historySyncState === "saving" ? "相談内容を保存中" : historySyncState === "error" ? "この端末には保持しています。再同期してください" : "相談内容はいつでも見返せます"}
-          </p>
-          {historySyncState === "error" ? <button type="button" className="history-more" onClick={() => void retryHistorySync()}>相談履歴を再同期</button> : null}
+          {historyLoadFailed ? (
+            <>
+              <p className="history-retention error">過去の相談を読み込めませんでした。保存済みの内容は残っています。</p>
+              <button type="button" className="history-more" onClick={() => void loadHistory()} disabled={historyLoading}>
+                {historyLoading ? "読み込み中…" : "もう一度読み込む"}
+              </button>
+            </>
+          ) : (
+            <>
+              <p className={`history-retention ${historySyncState === "error" ? "error" : ""}`}>
+                {historySyncState === "loading" ? "相談履歴を読み込んでいます" : historySyncState === "saving" ? "相談内容を保存中" : historySyncState === "error" ? "この端末には保持しています。再同期してください" : "相談内容はいつでも見返せます"}
+              </p>
+              {historySyncState === "error" ? <button type="button" className="history-more" onClick={() => void retryHistorySync()}>相談履歴を再同期</button> : null}
+            </>
+          )}
         </div>
         <div className="rail-bottom">強い痛みや腫れなどがある場合は、製品の使用を止めて医療機関へ相談してください。</div>
       </aside>

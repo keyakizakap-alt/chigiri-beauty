@@ -40,6 +40,19 @@ test("shows a short branded splash screen on launch", () => {
   assert.match(component, /CHIGIRI Beautyを開いています/);
 });
 
+test("loads the whole history in one request and reports load failures honestly", () => {
+  // 担当ごとに5本投げていたころは、1本落ちるだけでサーバーにある履歴まで
+  // 画面から消え、しかも「この端末には保持しています」と誤って案内していた。
+  assert.doesNotMatch(component, /\/api\/consultations\?specialist=/);
+  assert.match(component, /fetchHistoryPage/);
+  assert.match(component, /historyLoadFailed/);
+  assert.match(component, /過去の相談を読み込めませんでした/);
+  assert.match(component, /もう一度読み込む/);
+  // specialist の指定は任意。省略時は全担当ぶんを返す。
+  assert.match(consultationApi, /specialist !== null && !specialists\.has\(specialist\)/);
+  assert.match(consultationApi, /specialist === null/);
+});
+
 test("persists consultation logs without a client-side retention cap", () => {
   assert.match(component, /fetch\("\/api\/consultations"/);
   assert.match(component, /相談内容はいつでも見返せます/);

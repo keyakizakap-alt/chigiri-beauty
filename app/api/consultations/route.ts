@@ -33,7 +33,10 @@ export async function GET(request: Request) {
   const owner = await ownerFor(request);
   const url = new URL(request.url);
   const specialist = url.searchParams.get("specialist");
-  if (!specialist || !specialists.has(specialist)) {
+  // specialist は任意。省略時は全担当の相談ログをまとめて返す。担当ごとに
+  // 5本のリクエストを投げると、そのうち1本が落ちただけで画面の履歴が
+  // すべて空になってしまうため、既定は1回の取得で済ませる。
+  if (specialist !== null && !specialists.has(specialist)) {
     return json({ error: "担当コンシェルジュを確認できません。" }, 400, owner.setCookie);
   }
   const parsedCursor = Number(url.searchParams.get("cursor") ?? "0");
@@ -42,9 +45,12 @@ export async function GET(request: Request) {
   try {
     await ensureChatSessionStorage();
     const db = await getDb();
+    const owned = specialist === null
+      ? eq(chatSessions.ownerKey, owner.key)
+      : and(eq(chatSessions.ownerKey, owner.key), eq(chatSessions.specialistId, specialist));
     const rows = await db.select({ payloadJson: chatSessions.payloadJson })
       .from(chatSessions)
-      .where(and(eq(chatSessions.ownerKey, owner.key), eq(chatSessions.specialistId, specialist)))
+      .where(owned)
       .orderBy(desc(chatSessions.updatedAt))
       .limit(pageSize + 1)
       .offset(offset);
