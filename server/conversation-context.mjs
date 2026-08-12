@@ -14,7 +14,7 @@ const rules = {
   hair: [
     { key: "concern", pattern: /広が|パサ|うねり|べたつ|フケ|かゆ|ダメージ|まとま/, fact: "髪・頭皮の悩みが具体的" },
     { key: "routine", pattern: /カラー|ブリーチ|アイロン|コテ|ドライヤー|毎朝|週\s*\d|月\s*\d/, fact: "カラーや熱の習慣が分かっている" },
-    { key: "preference", pattern: /軽い仕上がり|しっとり|手触りを.{0,6}(重視|優先)|まとまりを.{0,6}(重視|優先)|時短|手間|予算|香り|仕上がりを優先/, fact: "仕上がりや手間の希望がある" },
+    { key: "preference", pattern: /軽い仕上がり|重い.{0,8}(苦手|避け)|オイル.{0,8}(苦手|避け)|しっとり|手触りを.{0,6}(重視|優先)|まとまりを.{0,6}(重視|優先)|時短|手間|予算|香り|仕上がりを優先/, fact: "仕上がりや手間の希望がある" },
   ],
   body: [
     { key: "area", pattern: /全身|首|デコルテ|腕|ひじ|肘|手の甲|背中|お腹|脚|すね|膝|ひざ|かかと|足/, fact: "気になる部位が分かっている" },
@@ -115,6 +115,7 @@ function describeKnownFacts(specialist, source, fallbackFacts) {
     addFact(facts, source, /アイロン|コテ/, "アイロン・コテを使う");
     addFact(facts, source, /時短|手間を増やしたくない/, "手間を増やさないケアを希望");
     addFact(facts, source, /手触り/, "手触りを重視");
+    addFact(facts, source, /重い.{0,8}(苦手|避け)|オイル.{0,8}(苦手|避け)/, "重いオイルは避けたい");
   } else if (specialist === "makeup") {
     addFact(facts, source, /リップ|口紅/, "リップを探している");
     addFact(facts, source, /下地|ファンデ|ファンデーション|コンシーラー|パウダー|ベースメイク/, "ベースメイクを相談したい");
@@ -227,6 +228,8 @@ export function reflectSpecialistConcern(specialist, input, lastAnsweredKey = ""
       [/ダメージ/, "髪のダメージ"],
     ]);
     const timing = firstMatch(source, [[/翌朝|朝起き/, "翌朝に"], [/朝/, "朝に"], [/乾かした(後|直後)/, "乾かした後に"], [/日中/, "日中に"]]);
+    const preference = /重い.{0,8}(苦手|避け)|オイル.{0,8}(苦手|避け)/.test(source) ? "重いオイルは避けたい" : "";
+    if (concern && preference) return `${timing}${concern}を整えたい一方で、${preference}んですね。`;
     if (concern) return `${timing}${concern}が気になるんですね。`;
   }
 
@@ -237,6 +240,8 @@ export function reflectSpecialistConcern(specialist, input, lastAnsweredKey = ""
     ]);
     const concern = firstMatch(source, [[/乾燥|かさつ|粉/, "乾燥"], [/ざらつ|ごわつ/, "ざらつき"], [/[べベ]タつ/, "ベタつき"], [/日焼け|紫外線/, "紫外線"], [/におい/, "におい"]]);
     const timing = firstMatch(source, [[/入浴後|お風呂上がり/, "入浴後に"], [/日中/, "日中に"], [/朝/, "朝に"], [/夜/, "夜に"]]);
+    const preference = /[べベ]タつか|さらさら/.test(source) ? "ベタつきにくさも大切" : /無香料|香りなし/.test(source) ? "香りなしも大切" : "";
+    if (area && concern && preference) return `${timing}${area}の${concern}が気になりつつ、${preference}なんですね。`;
     if (area && concern) return `${timing}${area}の${concern}が気になるんですね。`;
     if (area) return `${area}が気になるんですね。`;
     if (concern) return `ボディの${concern}が気になるんですね。`;
@@ -249,7 +254,10 @@ export function reflectSpecialistConcern(specialist, input, lastAnsweredKey = ""
     ]);
     const issue = firstMatch(source, [[/色落ち/, "色落ち"], [/テカリ|皮脂/, "テカリ"], [/よれ|崩れ/, "崩れ"], [/乾燥|粉っぽ/, "乾燥・粉っぽさ"], [/にじみ/, "にじみ"]]);
     const finish = firstMatch(source, [[/ツヤ/, "ツヤのある"], [/マット/, "マットな"], [/ナチュラル|自然/, "自然な"], [/華やか|アイドル/, "華やかな"]]);
+    const scene = firstMatch(source, [[/ライブ|イベント/, "ライブやイベント"], [/仕事|オフィス/, "仕事"], [/食事|デート|お出かけ/, "食事やお出かけ"], [/普段/, "普段"]]);
+    if (focus && issue && scene) return `${scene}で使う${focus}の、${issue}を整えたいんですね。`;
     if (focus && issue) return `${focus}の${issue}が気になるんですね。`;
+    if (focus && finish) return `${focus}を${finish}仕上がりにしたいんですね。`;
     if (focus) return `${focus}について相談したいんですね。`;
     if (finish) return `${finish}仕上がりが好みなんですね。`;
   }
@@ -258,8 +266,9 @@ export function reflectSpecialistConcern(specialist, input, lastAnsweredKey = ""
     const area = firstMatch(source, [[/爪先|爪の先|爪表面|爪の表面/, "爪先・表面"], [/甘皮|ささくれ/, "甘皮まわり"], [/手肌|手の甲|指先|ハンド/, "手肌"]]);
     const concern = firstMatch(source, [[/割れ|欠け|二枚爪/, "割れ・欠け"], [/乾燥/, "乾燥"], [/手荒れ/, "手荒れ"], [/はがれ|持ち/, "ネイルの持ち"], [/縦筋/, "縦筋"]]);
     const exposure = /水仕事|手洗い|消毒|アルコール/.test(source) ? "水仕事や手洗いが多くて、" : "";
+    const timing = /夜/.test(source) ? "夜ならケアしやすく、" : /日中|こまめ/.test(source) ? "日中ならケアしやすく、" : "";
     if (/爪先|爪の先/.test(source) && /欠け/.test(source)) return `${exposure}爪先が欠けるのが気になるんですね。`;
-    if (area && concern) return `${exposure}${area}の${concern}が気になるんですね。`;
+    if (area && concern) return `${exposure}${timing}${area}の${concern}が気になるんですね。`;
     if (area) return `${exposure}${area}が気になるんですね。`;
     if (concern) return `${exposure}${concern}が気になるんですね。`;
   }

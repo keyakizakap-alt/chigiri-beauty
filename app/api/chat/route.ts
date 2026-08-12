@@ -4,6 +4,7 @@ import { ownedUploadDataUrl } from "@/server/upload-store";
 
 const allowedStages = new Set(["concern", "skin", "inventory", "budget", "complete"]);
 const allowedSpecialists = new Set(["skin", "hair", "body", "makeup", "nail"]);
+const allowedReplyModes = new Set(["quick", "balanced", "deep"]);
 
 export async function POST(request: Request) {
   let body: {
@@ -12,6 +13,8 @@ export async function POST(request: Request) {
     input?: string;
     images?: string[];
     ownedProductIds?: string[];
+    replyMode?: string;
+    customOwnedItems?: Array<{ brand?: unknown; name?: unknown; category?: unknown; note?: unknown }>;
     conditions?: Array<{
       specialistId?: string;
       weatherLabel?: string;
@@ -53,6 +56,16 @@ export async function POST(request: Request) {
   const images = (await Promise.all(imageIds.map((id) => ownedUploadDataUrl(request, id)))).filter((value): value is string => Boolean(value));
   const ownedIds = (body.ownedProductIds ?? []).filter((id): id is string => typeof id === "string").slice(0, 50);
   const ownedProducts = officialProducts.filter((product) => ownedIds.includes(product.id));
+  const replyMode = allowedReplyModes.has(body.replyMode ?? "") ? body.replyMode as "quick" | "balanced" | "deep" : "balanced";
+  const customOwnedItems = (body.customOwnedItems ?? []).slice(0, 50).flatMap((item) => {
+    if (!item || typeof item !== "object" || typeof item.name !== "string" || !item.name.trim()) return [];
+    return [{
+      brand: typeof item.brand === "string" ? item.brand.trim().slice(0, 60) : "",
+      name: item.name.trim().slice(0, 120),
+      category: typeof item.category === "string" ? item.category.slice(0, 30) : "未分類",
+      note: typeof item.note === "string" ? item.note.trim().slice(0, 240) : "",
+    }];
+  });
   const specialistLabels: Record<string, string> = { skin: "肌", hair: "髪・頭皮", body: "ボディ", makeup: "メイク", nail: "爪・手肌" };
   const conditionParts = (body.conditions ?? []).slice(0, 5).flatMap((condition) => {
     if (!condition || typeof condition !== "object") return [];
@@ -78,6 +91,8 @@ export async function POST(request: Request) {
     ownedProducts,
     conditionParts.join("・"),
     memory,
+    replyMode,
+    customOwnedItems,
   );
   return Response.json(reply, { headers: { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
 }
