@@ -56,6 +56,16 @@ test("persists consultation logs without a client-side retention cap", () => {
   assert.match(component, /while \(cursor !== null\)/);
 });
 
+test("offers a searchable read-only consultation log viewer", () => {
+  assert.match(component, /これまでの相談を見返す/);
+  assert.match(component, /historyReviewQuery/);
+  assert.match(component, /historySpecialistFilter/);
+  assert.match(component, /history-transcript-messages/);
+  assert.match(component, /この相談を再開/);
+  assert.match(component, /この回答で提案した商品/);
+  assert.doesNotMatch(component, /history-transcript[\s\S]{0,2000}contentEditable/);
+});
+
 test("keeps consultation logs immutable in the customer UI", () => {
   assert.doesNotMatch(component, /deleteSession\(session/);
   assert.doesNotMatch(component, /history-delete/);
