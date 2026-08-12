@@ -12,6 +12,7 @@ import {
   type VerifiedProduct,
 } from "@/data/official-products";
 import { productDifference, productInsight } from "@/data/product-insights";
+import { budgetFromText } from "@/server/budget.mjs";
 import type { ProductReviewEvidence } from "@/server/review-evidence";
 
 type Stage = "concern" | "skin" | "inventory" | "budget" | "complete";
@@ -131,8 +132,8 @@ const shoppingStyles: ShoppingStyle[] = [
 
 const specialists: Array<{ id: SpecialistId; name: string; role: string; icon: string; greeting: string; quickReplies: string[] }> = [
   { id: "skin", name: "ARCA", role: "スキンケア", icon: "A", greeting: "ARCAです。肌のことで、今いちばん気になっていることは何ですか？ 小さな違和感でも大丈夫です。", quickReplies: ["乾燥が気になる", "毛穴やキメが気になる", "日によって肌がゆらぐ", "何を使えばいいか分からない"] },
-  { id: "hair", name: "SILQA", role: "ヘア・頭皮ケア", icon: "S", greeting: "SILQAです。髪の広がりやダメージ、頭皮のことまで相談できます。今日はどこから話しますか？", quickReplies: ["髪の乾燥・広がり", "頭皮のべたつき", "ダメージが気になる", "自分に合うケアが不明"] },
-  { id: "body", name: "SOMA", role: "ボディケア", icon: "S", greeting: "SOMAです。乾燥やざらつき、UV対策まで相談できます。今日はどの悩みから話しますか？", quickReplies: ["全身の乾燥", "ひじ・ひざのざらつき", "ボディのUV対策", "ケアを習慣化したい"] },
+  { id: "hair", name: "SILQA", role: "ヘア・頭皮ケア", icon: "Si", greeting: "SILQAです。髪の広がりやダメージ、頭皮のことまで相談できます。今日はどこから話しますか？", quickReplies: ["髪の乾燥・広がり", "頭皮のべたつき", "ダメージが気になる", "自分に合うケアが不明"] },
+  { id: "body", name: "SOMA", role: "ボディケア", icon: "So", greeting: "SOMAです。乾燥やざらつき、UV対策まで相談できます。今日はどの悩みから話しますか？", quickReplies: ["全身の乾燥", "ひじ・ひざのざらつき", "ボディのUV対策", "ケアを習慣化したい"] },
   { id: "makeup", name: "TINTA", role: "メイク・コスメ", icon: "T", greeting: "TINTAです。普段のメイクでも、ライブやお出かけ用でも大丈夫です。今日は何について相談しますか？", quickReplies: ["似合う色を知りたい", "崩れにくくしたい", "手持ちでメイクしたい", "場面別に提案してほしい"] },
   { id: "nail", name: "UNEA", role: "ネイル・ハンド", icon: "U", greeting: "UNEAです。爪の乾燥、手荒れ、セルフネイルのことまで相談できます。今いちばん困っているのはどれですか？", quickReplies: ["爪が乾燥しやすい", "手荒れが気になる", "セルフネイル相談", "簡単なケアを知りたい"] },
 ];
@@ -362,9 +363,7 @@ function purchaseDestination(product: VerifiedProduct) {
 }
 
 function parseBudget(text: string) {
-  if (text.includes("買いたくない") || text.includes("0円")) return 0;
-  const match = text.replace(/,/g, "").match(/(\d{3,5})/);
-  return match ? Number(match[1]) : 3000;
+  return budgetFromText(text, 3000);
 }
 
 function marketOf(product: VerifiedProduct): ProductMarket {
@@ -473,7 +472,6 @@ export default function ChigiriApp() {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const saveRevisionRef = useRef(0);
-  const backgroundedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSplashVisible(false), 1100);
@@ -643,13 +641,13 @@ export default function ChigiriApp() {
     [specialistId, visibleProducts]
   );
 
-  const plans = useMemo(
-    () => createPlans(products, selectedProducts, budget, messages),
-    [budget, messages, products, selectedProducts]
-  );
+  // プランはスキンケアの結果カードでしか使わない。他の担当では 100 通りの
+  // 組み合わせを毎メッセージ作り直すだけになるので、計算自体を行わない。
   const result = useMemo(
-    () => selectBestFromTopThree(plans, selectedProducts.length, budget),
-    [budget, plans, selectedProducts.length]
+    () => specialistId === "skin"
+      ? selectBestFromTopThree(createPlans(products, selectedProducts, budget, messages), selectedProducts.length, budget)
+      : null,
+    [budget, messages, products, selectedProducts, specialistId]
   );
   const activeSpecialist = specialists.find((item) => item.id === specialistId) ?? specialists[0];
   const visibleSessions = useMemo(
@@ -739,7 +737,6 @@ export default function ChigiriApp() {
           conditions: latestConditions,
           history: messages.map(({ role, text }) => ({ role, text })).slice(-20),
           memory: {
-            facts: conversationFacts,
             knownKeys: knownContextKeys,
             askedKeys: askedContextKeys,
           },
@@ -760,11 +757,10 @@ export default function ChigiriApp() {
             : specialistId === "skin" && stage !== "budget" && stage !== "complete"
               ? stageOrder[stage]
               : stage;
-      const assistantText = nextStage === "inventory"
-        ? inventoryPrompts[specialistId]
-        : data.text ?? "うまくお返事をまとめられませんでした。少し言い換えて、もう一度送ってもらえますか？";
+      // 手持ち確認へ進むときも、生成された返答は差し替えない。手持ちを聞く文言は
+      // ピッカーの見出し（inventoryPrompts）が担当し、質問が二重に並ばないようにする。
+      const assistantText = data.text ?? "うまくお返事をまとめられませんでした。少し言い換えて、もう一度送ってもらえますか？";
       setServiceNotice(data.mode === "local-fallback" ? "今は基本のケア案内でお返ししています。詳しいパーソナル提案は、少し時間をおいてお試しください。" : "");
-      await new Promise((resolve) => setTimeout(resolve, 650 + Math.random() * 520));
       setMessages((current) => [
         ...current,
         {
@@ -772,12 +768,12 @@ export default function ChigiriApp() {
           role: "assistant",
           text: assistantText,
           time: now(),
-          recommendedProducts: nextStage === "inventory" ? undefined : data.recommendedProducts?.slice(0, 2),
-          recommendationReviews: nextStage === "inventory" ? undefined : data.recommendationReviews?.slice(0, 2),
+          recommendedProducts: data.recommendedProducts?.slice(0, 2),
+          recommendationReviews: data.recommendationReviews?.slice(0, 2),
         },
       ]);
       setConversationPhase(data.conversationPhase ?? "understand");
-      setSuggestedReplies(nextStage === "inventory" ? [] : data.suggestedReplies?.slice(0, 3) ?? []);
+      setSuggestedReplies(data.suggestedReplies?.slice(0, 3) ?? []);
       setConversationFacts(data.conversationFacts?.slice(0, 20) ?? conversationFacts);
       setKnownContextKeys(data.knownContextKeys?.slice(0, 12) ?? knownContextKeys);
       setAskedContextKeys(data.askedContextKeys?.slice(0, 12) ?? askedContextKeys);
@@ -988,35 +984,6 @@ export default function ChigiriApp() {
     setAskedContextKeys([]);
     setServiceNotice("");
   }
-
-  useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === "hidden") {
-        backgroundedAtRef.current = Date.now();
-        return;
-      }
-      const backgroundedAt = backgroundedAtRef.current;
-      backgroundedAtRef.current = null;
-      if (backgroundedAt && Date.now() - backgroundedAt >= 30_000 && !busy && messages.some((message) => message.role === "user")) {
-        setActiveSessionId(createSessionId());
-        setMessages([initialMessageFor(specialistId)]);
-        setStage("concern");
-        setSelectedIds([]);
-        setBudget(3000);
-        setConversationPhase("listen");
-        setSuggestedReplies(specialists.find((item) => item.id === specialistId)?.quickReplies ?? []);
-        setConversationFacts([]);
-        setKnownContextKeys([]);
-        setAskedContextKeys([]);
-        setServiceNotice("");
-        setPendingImages([]);
-        setInput("");
-        setHistoryOpen(false);
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [busy, messages, specialistId]);
 
   async function loadMoreHistory() {
     const cursor = historyCursors[specialistId];
@@ -1243,8 +1210,8 @@ export default function ChigiriApp() {
               <div className="product-picker">
                 <div className="product-picker-head">
                   <div>
-                    <strong>{activeSpecialist.role}の手持ちアイテム</strong>
-                    <small>いつも使っているものを選んでください。見つからない場合は、あとで会話から伝えられます。</small>
+                    <strong>{inventoryPrompts[specialistId]}</strong>
+                    <small>見つからない場合は、下の入力欄からそのまま伝えても大丈夫です。</small>
                   </div>
                   <span>{selectedIds.length}件選択中</span>
                 </div>
@@ -1308,7 +1275,7 @@ export default function ChigiriApp() {
               </div>
             )}
 
-            {!busy && specialistId === "skin" && stage === "complete" && (
+            {!busy && result && stage === "complete" && (
               <div className="result-card">
                 <div className="selection-summary">
                   <div className="selection-check" aria-hidden="true">✓</div>
@@ -1429,15 +1396,15 @@ export default function ChigiriApp() {
         <div className="composer-wrap">
           <form className="composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
             <input ref={imageInputRef} className="image-input" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => void addImages(event.target.files)} aria-label="写真を追加" />
-            <button className="attach" type="button" onClick={() => imageInputRef.current?.click()} disabled={busy || uploading || stage === "inventory" || pendingImages.length >= 3} aria-label="写真を追加">⌁</button>
+            <button className="attach" type="button" onClick={() => imageInputRef.current?.click()} disabled={busy || uploading || pendingImages.length >= 3} aria-label="写真を追加">⌁</button>
             <input
               aria-label="相談内容"
               value={input}
-              disabled={busy || stage === "inventory"}
+              disabled={busy}
               onChange={(event) => setInput(event.target.value)}
-              placeholder={stage === "complete" ? "気になる点や変えたいことを入力" : stage === "inventory" ? "上の商品から選んでください" : "気になっていることを入力"}
+              placeholder={stage === "complete" ? "気になる点や変えたいことを入力" : stage === "inventory" ? "上の商品から選ぶか、そのまま入力できます" : "気になっていることを入力"}
             />
-            <button className="send" type="submit" disabled={(!input.trim() && !pendingImages.length) || busy || uploading || stage === "inventory"} aria-label="送信">↑</button>
+            <button className="send" type="submit" disabled={(!input.trim() && !pendingImages.length) || busy || uploading} aria-label="送信">↑</button>
           </form>
           {!!pendingImages.length && (
             <div className="pending-images" aria-label="送信予定の画像">

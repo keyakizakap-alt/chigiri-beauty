@@ -22,21 +22,32 @@ function toDbProduct(product: (typeof officialProducts)[number]) {
   };
 }
 
-async function syncOfficialCatalog() {
-  const db = await getDb();
-  const batchSize = 12;
-  for (let index = 0; index < officialProducts.length; index += batchSize) {
-    await db
-      .insert(products)
-      .values(officialProducts.slice(index, index + batchSize).map(toDbProduct))
-      .onConflictDoNothing();
+// カタログの同期は参照のたびに走らせない。1インスタンスにつき一度だけ行い、
+// 失敗したら次のリクエストで再試行できるようにする。
+let catalogSynced: Promise<void> | null = null;
+
+async function syncOfficialCatalog(db: Awaited<ReturnType<typeof getDb>>) {
+  if (!catalogSynced) {
+    catalogSynced = (async () => {
+      const batchSize = 12;
+      for (let index = 0; index < officialProducts.length; index += batchSize) {
+        await db
+          .insert(products)
+          .values(officialProducts.slice(index, index + batchSize).map(toDbProduct))
+          .onConflictDoNothing();
+      }
+    })().catch((error) => {
+      catalogSynced = null;
+      throw error;
+    });
   }
-  return db;
+  await catalogSynced;
 }
 
 export async function GET() {
   try {
-    const db = await syncOfficialCatalog();
+    const db = await getDb();
+    await syncOfficialCatalog(db);
     const rows = await db.select().from(products).orderBy(asc(products.brand), asc(products.name));
     return Response.json({
       products: rows.map((row) => ({

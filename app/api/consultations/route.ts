@@ -1,8 +1,8 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { ensureChatSessionStorage, getDb } from "@/db";
 import { chatSessions, deletedChatSessions, uploadedAssets } from "@/db/schema";
+import { privateJson as json, requestOwner as ownerFor } from "@/server/request-owner";
 
-const ownerCookie = "chigiri_owner";
 const specialists = new Set(["skin", "hair", "body", "makeup", "nail"]);
 const sessionIdPattern = /^[a-zA-Z0-9-]{8,80}$/;
 const pageSize = 40;
@@ -15,40 +15,6 @@ type StoredSession = {
   messages: unknown[];
   [key: string]: unknown;
 };
-
-function cookieValue(request: Request, name: string) {
-  const cookies = request.headers.get("cookie") ?? "";
-  for (const item of cookies.split(";")) {
-    const [key, ...value] = item.trim().split("=");
-    if (key === name) return decodeURIComponent(value.join("="));
-  }
-  return null;
-}
-
-async function sha256(value: string) {
-  const bytes = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function ownerFor(request: Request) {
-  const email = request.headers.get("oai-authenticated-user-email")?.trim().toLowerCase();
-  if (email) return { key: `user:${await sha256(email)}`, setCookie: null as string | null };
-
-  const current = cookieValue(request, ownerCookie);
-  const id = current && /^[0-9a-f-]{36}$/i.test(current) ? current : crypto.randomUUID();
-  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
-  return {
-    key: `guest:${id}`,
-    setCookie: `${ownerCookie}=${encodeURIComponent(id)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=34560000${secure}`,
-  };
-}
-
-function json(data: unknown, status: number, setCookie: string | null) {
-  const headers = new Headers({ "Content-Type": "application/json; charset=utf-8", "Cache-Control": "private, no-store" });
-  if (setCookie) headers.set("Set-Cookie", setCookie);
-  return new Response(JSON.stringify(data), { status, headers });
-}
 
 function validateSession(value: unknown): StoredSession | null {
   if (!value || typeof value !== "object") return null;

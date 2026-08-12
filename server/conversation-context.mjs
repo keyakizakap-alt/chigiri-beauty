@@ -306,10 +306,10 @@ const assistantQuestionRules = {
   skin: [
     ["concern", /いちばん気になる|乾燥.{0,8}[べベ]タつき.{0,8}刺激/],
     ["timing", /どんなとき|いつ.{0,8}気になる|洗顔.{0,8}日中|気になるタイミング/],
-    ["preference", /軽さ.{0,8}しっとり|仕上がり.{0,12}優先/],
+    ["preference", /軽さ.{0,8}しっとり|仕上がり.{0,12}優先|手軽さ.{0,12}満足感|商品を増やす/],
   ],
   hair: [
-    ["concern", /いちばん変えたい|優先したい.{0,20}(まとまり|手触り|頭皮)|まとまり.{0,8}手触り.{0,8}頭皮/],
+    ["concern", /いちばん変えたい|まず変えたい|優先したい.{0,20}(まとまり|手触り|頭皮)|まとまり.{0,8}手触り.{0,8}頭皮/],
     ["routine", /カラー|ブリーチ|アイロン|コテ|熱.{0,12}(頻度|どのくらい)|使う頻度/],
     ["preference", /手間.{0,20}(仕上がり|増や)|仕上がり.{0,12}優先|夜.{0,12}丁寧なケア/],
   ],
@@ -324,7 +324,7 @@ const assistantQuestionRules = {
     ["area", /どの部位|気になる.{0,8}(部位|場所)/],
     ["concern", /その部位|乾燥.{0,8}ざらつき.{0,8}刺激/],
     ["timing", /入浴後.{0,8}日中|気になる.{0,8}(時間|タイミング)/],
-    ["preference", /[べベ]タつきにくさ.{0,8}保湿感.{0,8}香り|最優先/],
+    ["preference", /[べベ]タつきにくさ.{0,8}保湿感.{0,8}香り|最優先|香りや使用感|短時間で済ませる/],
   ],
   nail: [
     ["area", /爪先.{0,8}甘皮.{0,8}手肌|気になる.{0,8}(場所|どこ)/],
@@ -388,7 +388,7 @@ function inferredAnswerFact(specialist, key, input) {
  * @param {SpecialistId} specialist
  * @param {string} input
  * @param {Array<{role: "assistant" | "user", text: string}>} history
- * @param {{facts?: string[], knownKeys?: string[], askedKeys?: string[]}} memory
+ * @param {{knownKeys?: string[], askedKeys?: string[]}} memory
  */
 export function deriveConversationContext(specialist, input, history = [], memory = {}) {
   const userTexts = history.filter((entry) => entry.role === "user").map((entry) => entry.text);
@@ -423,17 +423,21 @@ export function deriveConversationContext(specialist, input, history = [], memor
     nail: knownKeys.has("area") && knownKeys.has("concern") && (knownKeys.has("exposure") || knownKeys.has("preference")),
   };
 
-  const previousFacts = Array.isArray(memory.facts)
-    ? memory.facts.filter((fact) => typeof fact === "string" && fact.trim()).map((fact) => fact.trim().slice(0, 120)).slice(0, 20)
-    : [];
+  // facts はクライアントから受け取らず、毎回サーバー側で会話から導出する。
+  // 送り返された文字列をそのままシステムプロンプトへ載せると、任意の指示を
+  // 注入できてしまうため。
   const currentFacts = [...describeKnownFacts(specialist, conversation, matched.map((item) => item.fact)), ...(answerFact ? [answerFact] : [])];
 
   return {
     knownKeys: [...knownKeys],
     askedKeys: [...askedKeys],
-    facts: [...new Set([...previousFacts, ...currentFacts])].slice(-20),
+    facts: [...new Set(currentFacts)].slice(-20),
     enoughContext: enoughBySpecialist[specialist],
     nextQuestion: next?.[1] ?? "",
+    // 質問文の正規表現による逆引きだけに頼ると、言い回し次第で「質問済み」を
+    // 取りこぼして同じことを聞き直してしまう。実際に質問した場合は呼び出し側が
+    // このキーを askedKeys へ足す。
+    nextQuestionKey: next?.[0] ?? "",
     lastAnsweredKey,
   };
 }

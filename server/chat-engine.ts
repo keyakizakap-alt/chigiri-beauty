@@ -5,13 +5,14 @@ import {
   type ProductSpecialistId,
   type VerifiedProduct,
 } from "../data/official-products";
+import { budgetFromText } from "./budget.mjs";
 import { deriveConversationContext, isDirectiveRequest, reflectSpecialistConcern } from "./conversation-context.mjs";
 import { suggestedRepliesForQuestion } from "./quick-replies.mjs";
 import type { ProductReviewEvidence } from "./review-evidence";
 
 type ChatStage = "concern" | "skin" | "inventory" | "budget" | "complete";
 type ChatHistoryEntry = { role: "assistant" | "user"; text: string; images?: string[] };
-type ConversationMemory = { facts?: string[]; knownKeys?: string[]; askedKeys?: string[] };
+type ConversationMemory = { knownKeys?: string[]; askedKeys?: string[] };
 
 export type ConversationPhase = "listen" | "understand" | "align" | "coach" | "propose" | "safety";
 export type ConversationAssessment = {
@@ -24,6 +25,7 @@ export type ConversationAssessment = {
   knownContextKeys: string[];
   askedContextKeys: string[];
   nextQuestion: string;
+  nextQuestionKey: string;
   lastAnsweredContextKey: string;
 };
 
@@ -51,7 +53,7 @@ const specialistProfiles: Record<ProductSpecialistId, {
     questions: ["仕上がりは、軽さとしっとり感のどちらを優先したいですか？", "朝と夜では、どちらのケアを簡単にしたいですか？"],
     contextQuestions: ["気になりやすいのは、洗顔の直後・日中・季節の変わり目のどこですか？", "今使っている中で、つけた直後の感触が気になるものはありますか？"],
     preferenceQuestions: ["今は商品を増やすより、手持ちの使い方を整える方向が近いですか？", "朝の手軽さと夜の満足感なら、どちらを優先したいですか？"],
-    acknowledgements: ["肌の状態だけでなく、気になるタイミングも大事な手がかりになりそうです。", "その感じなら、アイテム数より使う順番から見た方がよさそうです。"],
+    acknowledgements: ["そうなんですね。もう少しだけ聞かせてください。", "その感じなら、アイテムを増やす前に使う順番から見てみましょう。"],
   },
   hair: {
     name: "SILQA",
@@ -66,7 +68,7 @@ const specialistProfiles: Record<ProductSpecialistId, {
     questions: ["優先したいのは、朝のまとまり・手触り・頭皮の快適さのどれですか？", "カラーやアイロンを使う頻度はどのくらいですか？"],
     contextQuestions: ["広がりや違和感が強いのは、乾かした直後と翌朝のどちらですか？", "カラー・アイロン・スタイリング剤は、普段どのくらい使いますか？"],
     preferenceQuestions: ["まず変えたいのは、朝のまとまりと頭皮の快適さのどちらですか？", "手間を増やさず整えたいですか、それとも夜に少し丁寧なケアができますか？"],
-    acknowledgements: ["髪そのものと頭皮では見方が変わるので、まず困る場面を分けて考えたいです。", "毎日の熱や乾かし方まで含めると、製品を増やさず変えられる余地もありそうです。"],
+    acknowledgements: ["そうなんですね。髪と頭皮では見るところが変わるので、もう少し聞かせてください。", "毎日の乾かし方を変えるだけでも、けっこう違いが出ます。"],
   },
   body: {
     name: "SOMA",
@@ -81,7 +83,7 @@ const specialistProfiles: Record<ProductSpecialistId, {
     questions: ["いちばん乾燥するのは、全身・ひじ膝・すね・かかとのどこですか？", "べたつきにくさと保湿感なら、どちらを優先しますか？"],
     contextQuestions: ["気になる部位は、入浴後すぐと日中ではどちらがつらいですか？", "今のボディケアが続きにくい理由は、べたつき・手間・塗る場所のどれに近いですか？"],
     preferenceQuestions: ["全身を短時間で済ませる方法と、気になる部分だけ丁寧にする方法ならどちらが合いそうですか？", "香りや使用感で避けたいものはありますか？"],
-    acknowledgements: ["部位と生活動線を分けて考えると、続けやすい形が見つかりそうです。", "ボディケアは塗るものだけでなく、塗る場所とタイミングもかなり影響します。"],
+    acknowledgements: ["そうなんですね。部位によってケアの仕方が変わります。", "塗るタイミングと置き場所を変えるだけでも、ぐっと続けやすくなります。"],
   },
   makeup: {
     name: "TINTA",
@@ -96,7 +98,7 @@ const specialistProfiles: Record<ProductSpecialistId, {
     questions: ["仕上がりは、ナチュラル・ツヤ・きちんと感のどれに寄せたいですか？", "使う場面は、普段・仕事・食事・イベントのどれに近いですか？"],
     contextQuestions: ["そのメイクで過ごすのは、普段・仕事・食事・ライブのどれに近いですか？", "今のメイクで最初に気になってくるのは、テカリ・乾燥・色落ちのどれですか？"],
     preferenceQuestions: ["仕上がりは、自然・ツヤ・きちんと感のどこへ寄せたいですか？", "手持ち中心で組みたいですか、それとも足りない1点だけ候補を見たいですか？"],
-    acknowledgements: ["似合うかだけでなく、過ごす場面と直しやすさまで合わせて考えたいです。", "全部を変えなくても、印象を決める一か所を選べば組み立てられそうです。"],
+    acknowledgements: ["そうなんですね。使う場面によって選び方が変わります。", "全部変えなくても、一か所決まれば組み立てられます。"],
   },
   nail: {
     name: "UNEA",
@@ -111,17 +113,11 @@ const specialistProfiles: Record<ProductSpecialistId, {
     questions: ["優先したいのは、爪の乾燥・手肌・ネイルの持ちのどれですか？", "日中の使いやすさと夜の集中保湿なら、どちらが合いそうですか？"],
     contextQuestions: ["気になるのは爪の表面・爪先・甘皮まわり・手肌のどこですか？", "水仕事や消毒、セルフネイルの頻度はどのくらいですか？"],
     preferenceQuestions: ["日中にこまめに使える軽さと、夜の集中ケアならどちらが続けやすいですか？", "ケア中心とネイルの持ち改善なら、今はどちらを優先したいですか？"],
-    acknowledgements: ["同じ乾燥でも爪先と甘皮ではケアする場所が違うので、そこを分けて見たいです。", "手を使う場面まで分かると、続けやすいタイミングをかなり絞れます。"],
+    acknowledgements: ["そうなんですね。爪先と甘皮ではケアする場所が違います。", "手を使う場面が分かると、続けやすいタイミングを絞れます。"],
   },
 };
 
-export function suggestedRepliesForAssistant(
-  specialist: ProductSpecialistId,
-  assistantText: string,
-  phase: ConversationPhase,
-) {
-  return suggestedRepliesForQuestion(specialist, assistantText, phase);
-}
+export { suggestedRepliesForQuestion as suggestedRepliesForAssistant };
 
 function normalize(value: string) {
   return value.normalize("NFKC").toLocaleLowerCase("ja-JP");
@@ -134,17 +130,26 @@ function variationIndex(input: string, history: ChatHistoryEntry[], size: number
 
 function budgetFromConversation(input: string, history: ChatHistoryEntry[]) {
   const source = [input, ...history.filter((entry) => entry.role === "user").slice(-5).map((entry) => entry.text)].join(" ");
-  if (/買いたくない|買い足しなし|(^|[^\d])0\s*円/.test(source)) return 0;
-  const values = [...source.replace(/,/g, "").matchAll(/(\d{3,5})\s*円/g)].map((match) => Number(match[1]));
-  return values.at(-1) ?? 5000;
+  return budgetFromText(source, 5000);
 }
 
 export function isSafetyEscalation(input: string) {
   return safetyPattern.test(input);
 }
 
-const proposalPattern = /(商品|製品|アイテム).*(提案|候補|おすすめ|選ん)|おすすめ|買うなら|何を買|何がいい|どれがいい|候補を見|提案して|選んで/;
-const coachingPattern = /(まず)?使い方.{0,12}(整え|見直|知り)|手持ち(だけ|中心).{0,12}(考え|使|組)/;
+/**
+ * 医療案内は当該ターンの発言にだけ返すが、提案の抑止は会話全体で維持する。
+ * 数ターン前に痛みや出血を伝えたユーザーが「おすすめは？」と聞いたときに
+ * 商品提案へ進んでしまうのを防ぐ。
+ */
+export function hasSafetyConcern(input: string, history: ChatHistoryEntry[] = []) {
+  if (isSafetyEscalation(input)) return true;
+  return history.filter((entry) => entry.role === "user").slice(-6).some((entry) => safetyPattern.test(entry.text));
+}
+
+// 「おすすめの使い方を教えて」は使い方の相談なので、商品提案の要求とは区別する。
+const proposalPattern = /(商品|製品|アイテム|コスメ).{0,12}(提案|候補|おすすめ|選ん)|おすすめ(?!の?(使い方|やり方|方法|手順|順番))|買うなら|何を買|何がいい|どれがいい|候補を見|提案して|選んで/;
+const coachingPattern = /(まず)?使い方.{0,12}(整え|見直|知り|教え)|手持ち(だけ|中心).{0,12}(考え|使|組)/;
 const affirmativePattern = /^(はい|うん|お願い|お願いします|見たい|知りたい|それで|提案して|候補を|商品も|製品も)/;
 
 export function isProposalRequestTurn(input: string, history: ChatHistoryEntry[] = []) {
@@ -184,6 +189,7 @@ export function assessConversation(
     knownContextKeys: context.knownKeys,
     askedContextKeys: context.askedKeys,
     nextQuestion: context.nextQuestion,
+    nextQuestionKey: context.nextQuestionKey,
     lastAnsweredContextKey: context.lastAnsweredKey,
   };
 
@@ -193,7 +199,7 @@ export function assessConversation(
   if (coachingPattern.test(normalize(input))) {
     return { phase: "coach", userTurnCount: turns, proposalRequested: false, enoughContext, suggestedReplies: ["この方法で試してみる", "もう少し簡単にしたい", "商品候補も見たい"], ...details };
   }
-  if (proposalRequested && enoughContext) {
+  if (proposalRequested && enoughContext && !hasSafetyConcern(input, history)) {
     return { phase: "propose", userTurnCount: turns, proposalRequested, enoughContext, suggestedReplies: ["もう少し予算を抑えたい", "手持ち中心に変えたい", "別の方向も見たい"], ...details };
   }
   if (enoughContext) {
@@ -202,13 +208,7 @@ export function assessConversation(
   if (turns <= 1) {
     return { phase: "listen", userTurnCount: turns, proposalRequested, enoughContext, suggestedReplies: specialistProfiles[specialist].questions.slice(0, 2), ...details };
   }
-  if (turns === 2 || !enoughContext) {
-    return { phase: "understand", userTurnCount: turns, proposalRequested, enoughContext, suggestedReplies: ["もう少し状況を話す", "手持ちも含めて相談する", "仕上がりの好みを伝える"], ...details };
-  }
-  if (!proposalRequested) {
-    return { phase: "align", userTurnCount: turns, proposalRequested, enoughContext, suggestedReplies: ["まず使い方を整えたい", "商品候補も見たい", "手持ちだけで考えたい"], ...details };
-  }
-  return { phase: "propose", userTurnCount: turns, proposalRequested, enoughContext, suggestedReplies: ["もう少し予算を抑えたい", "手持ち中心に変えたい", "別の方向も見たい"], ...details };
+  return { phase: "understand", userTurnCount: turns, proposalRequested, enoughContext, suggestedReplies: ["もう少し状況を話す", "手持ちも含めて相談する", "仕上がりの好みを伝える"], ...details };
 }
 
 export function rankOfficialProducts(
@@ -218,9 +218,10 @@ export function rankOfficialProducts(
   limit = 2,
   ownedProductIds: string[] = [],
 ) {
-  if (isSafetyEscalation(input)) return [];
+  if (hasSafetyConcern(input, history)) return [];
   const conversation = normalize([input, ...history.filter((entry) => entry.role === "user").slice(-5).map((entry) => entry.text)].join(" "));
   const budget = budgetFromConversation(input, history);
+  if (budget === 0) return [];
 
   return officialProducts
     .filter((product) => productSpecialistOf(product) === specialist && !ownedProductIds.includes(product.id))
@@ -229,14 +230,10 @@ export function rankOfficialProducts(
       const tagScore = tags.reduce((score, tag) => score + (conversation.includes(normalize(tag)) ? 9 : 0), 0);
       const identityScore = [product.brand, product.name, categoryLabels[product.category]]
         .reduce((score, value) => score + (conversation.includes(normalize(value)) ? 12 : 0), 0);
-      const priceScore = budget === 0
-        ? -40
-        : product.price == null
-          ? 0
-          : product.price <= budget ? 4 : -8;
+      const priceScore = product.price == null ? 0 : product.price <= budget ? 4 : -8;
       return { product, score: tagScore + identityScore + priceScore - index / 1000 };
     })
-    .filter(({ score }) => budgetFromConversation(input, history) !== 0 && score > -20)
+    .filter(({ score }) => score > -20)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
     .map(({ product }) => product);
