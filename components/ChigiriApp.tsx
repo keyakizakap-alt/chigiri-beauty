@@ -716,8 +716,8 @@ export default function ChigiriApp() {
   );
   const activeSpecialist = specialists.find((item) => item.id === specialistId) ?? specialists[0];
   const visibleSessions = useMemo(
-    () => sessions.filter((session) => session.specialistId === specialistId),
-    [sessions, specialistId]
+    () => sessions,
+    [sessions]
   );
   const reviewSessions = useMemo(() => {
     const query = historyReviewQuery.trim().toLocaleLowerCase("ja-JP");
@@ -1181,30 +1181,36 @@ export default function ChigiriApp() {
         <div className="history-panel">
           <div className="history-head">
             <div>
-              <div className="eyebrow">これまでの相談</div>
+              <div className="eyebrow">チャット</div>
               <h3>相談履歴</h3>
             </div>
             <div className="history-head-actions">
-              <button type="button" className="history-review-trigger" onClick={() => openHistoryReview()} aria-label="相談ログを見返す">一覧</button>
               <button type="button" onClick={startNewSession} aria-label="新しい相談を始める">＋</button>
             </div>
           </div>
           <div className="history-list">
             {visibleSessions.length ? visibleSessions.map((session) => {
-              const lastMessage = session.messages[session.messages.length - 1]?.text ?? "";
+              const sessionSpecialist = specialists.find((item) => item.id === session.specialistId) ?? specialists[0];
               return (
                 <div
                   key={session.id}
                   className={`history-row ${session.id === activeSessionId ? "active" : ""}`}
                 >
-                  <button type="button" className="history-item" onClick={() => openHistoryReview(session)}>
-                    <span className="history-title"><b>{session.title}</b><time>{sessionTime(session.updatedAt)}</time></span>
-                    <span className="history-preview">{lastMessage.replace(/\n/g, " ").slice(0, 42)}</span>
+                  <button
+                    type="button"
+                    className="history-item"
+                    onClick={() => openSession(session)}
+                    aria-current={session.id === activeSessionId ? "page" : undefined}
+                    title={`${session.title} — ${sessionSpecialist.name}`}
+                  >
+                    <span className="history-title"><b>{session.title}</b></span>
+                    <span className="history-item-actions" aria-hidden="true"><span>{sessionSpecialist.name}</span><time>{sessionTime(session.updatedAt)}</time></span>
                   </button>
                 </div>
               );
-            }) : <p className="history-empty">{activeSpecialist.name}との相談を始めると、ここからあとで振り返れます。</p>}
+            }) : <p className="history-empty">相談を始めると、ここにチャット履歴が残ります。</p>}
           </div>
+          {visibleSessions.length ? <button type="button" className="history-review-link" onClick={() => openHistoryReview()}>履歴を検索・すべて見る</button> : null}
           <p className={`history-retention ${historySyncState === "error" ? "error" : ""}`}>
             {historySyncState === "loading" ? "すべての相談ログを読み込んでいます" : historySyncState === "saving" ? "相談内容を保存中" : historySyncState === "error" ? "この端末には保持しています。再同期してください" : "相談ログは削除せず、すべて保存します"}
           </p>

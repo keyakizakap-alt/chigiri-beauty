@@ -24,7 +24,7 @@ test("offers five distinct named beauty specialists", () => {
 
 test("opens each specialist on a fresh chat while keeping history available", () => {
   assert.match(component, /visibleSessions = useMemo/);
-  assert.match(component, /session\.specialistId === specialistId/);
+  assert.match(component, /\(\) => sessions,/);
   assert.doesNotMatch(component, /const latest = \[\.\.\.valid\]/);
   assert.doesNotMatch(component, /const destination = saved\.find/);
   assert.match(component, /setActiveSessionId\(createSessionId\(\)\)/);
@@ -64,6 +64,14 @@ test("offers a searchable read-only consultation log viewer", () => {
   assert.match(component, /この相談を再開/);
   assert.match(component, /この回答で提案した商品/);
   assert.doesNotMatch(component, /history-transcript[\s\S]{0,2000}contentEditable/);
+});
+
+test("keeps every consultation directly accessible in the sidebar", () => {
+  assert.match(component, /const visibleSessions = useMemo\(\s*\(\) => sessions/);
+  assert.match(component, /onClick=\{\(\) => openSession\(session\)\}/);
+  assert.match(component, /aria-current=\{session\.id === activeSessionId/);
+  assert.match(component, /履歴を検索・すべて見る/);
+  assert.doesNotMatch(component, /className="history-preview"/);
 });
 
 test("keeps consultation logs immutable in the customer UI", () => {
