@@ -323,6 +323,23 @@ function now() {
   return new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit" }).format(new Date());
 }
 
+// 表示までに少しだけ間を置き、内容量に応じた自然な会話テンポをつくる。
+// 生成モデルの品質・コストを変えず、待機中は既存のタイピング表示で伝える。
+function naturalReplyDelay(text: string, phase?: ConversationPhase) {
+  const characters = text.replace(/\s/g, "").length;
+  const base = phase === "propose" ? 1450 : 1050;
+  return Math.min(4200, Math.max(1500, base + characters * 9 + Math.round(Math.random() * 320)));
+}
+
+function productImageSource(product: VerifiedProduct) {
+  return `/api/product-image?productId=${encodeURIComponent(product.id)}`;
+}
+
+function productUseCaution(product: VerifiedProduct) {
+  const [firstCheck, secondCheck] = productInsight(product).checkPoints;
+  return `${firstCheck}をまず確認してください。違和感があれば使用を止め、${secondCheck ?? "使い始めた時期や重ね使い"}も一緒に振り返ると原因を切り分けやすくなります。`;
+}
+
 function createSessionId() {
   if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
   return `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -764,7 +781,7 @@ export default function ChigiriApp() {
         ? inventoryPrompts[specialistId]
         : data.text ?? "うまくお返事をまとめられませんでした。少し言い換えて、もう一度送ってもらえますか？";
       setServiceNotice(data.mode === "local-fallback" ? "今は基本のケア案内でお返ししています。詳しいパーソナル提案は、少し時間をおいてお試しください。" : "");
-      await new Promise((resolve) => setTimeout(resolve, 650 + Math.random() * 520));
+      await new Promise((resolve) => setTimeout(resolve, naturalReplyDelay(assistantText, data.conversationPhase)));
       setMessages((current) => [
         ...current,
         {
@@ -1191,10 +1208,25 @@ export default function ChigiriApp() {
                       {message.recommendedProducts.map((product) => {
                         const evidence = message.recommendationReviews?.find((item) => item.productId === product.id);
                         return <article className="message-product-card" key={product.id}>
-                          <span>{categoryLabels[product.category]}の候補</span>
-                          <b>{product.brand}</b>
-                          <strong>{product.name}</strong>
+                          <div className="message-product-heading">
+                            <img
+                              className="product-photo"
+                              src={productImageSource(product)}
+                              alt={`${product.brand} ${product.name}の公式商品写真`}
+                              loading="lazy"
+                              onError={(event) => { event.currentTarget.hidden = true; }}
+                            />
+                            <div>
+                              <span>{categoryLabels[product.category]}の候補</span>
+                              <b>{product.brand}</b>
+                              <strong>{product.name}</strong>
+                            </div>
+                          </div>
                           <p>{product.claims[0]}</p>
+                          <aside className="product-caution" role="note" aria-label={`${product.name}を使う前の注意`}>
+                            <strong>使う前の注意</strong>
+                            <p>{productUseCaution(product)}</p>
+                          </aside>
                           <div className="proposal-review" aria-label={`${product.name}の口コミ情報`}>
                             <span>口コミ</span>
                             {evidence?.review.status === "available" ? (
@@ -1227,7 +1259,7 @@ export default function ChigiriApp() {
             {busy && (
               <div className="message">
                 <div className="avatar" aria-label="CHIGIRI" />
-                <div className="typing" aria-label="返信を考えています"><i /><i /><i /></div>
+                <div className="typing" aria-label="返信を考えています"><i /><i /><i /><span>回答を考えています…</span></div>
               </div>
             )}
 
@@ -1349,10 +1381,19 @@ export default function ChigiriApp() {
                   {result.recommendation ? (
                     <article className="recommendation purchase-card">
                       <div className="purchase-heading">
-                        <div>
-                          <span className="product-kicker">必要なら追加するもの · {categoryLabels[result.recommendation.category]}</span>
-                          <h4>{result.recommendation.brand}</h4>
-                          <h3>{result.recommendation.name}</h3>
+                        <div className="purchase-product-media">
+                          <img
+                            className="product-photo purchase-photo"
+                            src={productImageSource(result.recommendation)}
+                            alt={`${result.recommendation.brand} ${result.recommendation.name}の公式商品写真`}
+                            loading="lazy"
+                            onError={(event) => { event.currentTarget.hidden = true; }}
+                          />
+                          <div>
+                            <span className="product-kicker">必要なら追加するもの · {categoryLabels[result.recommendation.category]}</span>
+                            <h4>{result.recommendation.brand}</h4>
+                            <h3>{result.recommendation.name}</h3>
+                          </div>
                         </div>
                         <div className="purchase-price">
                           <strong>{priceText(result.recommendation)}</strong>
@@ -1364,6 +1405,10 @@ export default function ChigiriApp() {
                         <h5>どんなアイテム？</h5>
                         <p>{result.recommendation.claims?.[0] ?? "詳しい特徴は商品ページで確認できます。"}</p>
                       </div>
+                      <aside className="product-caution purchase-caution" role="note" aria-label={`${result.recommendation.name}を使う前の注意`}>
+                        <strong>使う前の注意</strong>
+                        <p>{productUseCaution(result.recommendation)}</p>
+                      </aside>
 
                       {!!result.recommendation.ingredientHighlights?.length && (
                         <div className="ingredient-list" aria-label="公式ページで確認した注目成分">
