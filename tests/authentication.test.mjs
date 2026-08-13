@@ -10,6 +10,7 @@ const auth = await readFile(new URL("../server/auth.ts", import.meta.url), "utf8
 const start = await readFile(new URL("../app/api/auth/google/start/route.ts", import.meta.url), "utf8");
 const callback = await readFile(new URL("../app/api/auth/google/callback/route.ts", import.meta.url), "utf8");
 const signOut = await readFile(new URL("../app/api/auth/signout/route.ts", import.meta.url), "utf8");
+const loginPage = await readFile(new URL("../app/login/page.tsx", import.meta.url), "utf8");
 const owner = await readFile(new URL("../server/request-owner.ts", import.meta.url), "utf8");
 
 test("signs in with Google through the app's own OpenID Connect routes", () => {
@@ -23,6 +24,9 @@ test("signs in with Google through the app's own OpenID Connect routes", () => {
   assert.match(signOut, /clearCookieHeader\(authCookieNames\.session/);
   assert.match(page, /signInPath\("\/"\)/);
   assert.match(page, /signOutPath\("\/"\)/);
+  assert.match(page, /"\/login"/);
+  assert.match(loginPage, /Googleで続ける/);
+  assert.match(loginPage, /signInPath\("\/"\)/);
   assert.match(component, /viewer \? signOutPath : signInPath/);
   assert.match(component, /Googleでログイン/);
   assert.match(component, /ログインして端末をまたいで履歴を残す/);

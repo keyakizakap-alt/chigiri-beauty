@@ -429,6 +429,26 @@ button { cursor: pointer; }
 .condition-history p, .no-condition { margin: 6px 0 0; color: var(--muted); font-size: 10px; line-height: 1.65; }
 
 @keyframes rise { from { opacity: 0; transform: translateY(7px); } }
+.login-page {
+  min-height: 100dvh; display: grid; place-items: center; padding: 28px;
+  background: radial-gradient(circle at 70% 12%, rgba(219,231,220,.9), transparent 36%), var(--paper);
+}
+.login-card {
+  width: min(100%, 520px); padding: clamp(30px, 7vw, 54px); border: 1px solid var(--line); border-radius: 32px;
+  background: rgba(255,253,248,.94); box-shadow: 0 28px 80px rgba(37,58,48,.12);
+}
+.login-brand { display: inline-block; margin-bottom: 34px; color: var(--ink); font-size: 14px; font-weight: 900; letter-spacing: .2em; text-decoration: none; }
+.login-card h1 { margin: 8px 0 18px; font-family: var(--font-serif); font-size: clamp(30px, 6vw, 44px); line-height: 1.25; }
+.login-card > p:not(.eyebrow) { color: var(--muted); line-height: 1.9; }
+.google-signin-button {
+  display: flex; align-items: center; justify-content: center; min-height: 48px; margin: 30px 0 20px;
+  border: 1px solid #cbd6cf; border-radius: 14px; color: #28483a; background: #fff;
+  font-size: 14px; font-weight: 800; text-decoration: none; box-shadow: 0 8px 24px rgba(37,58,48,.07);
+}
+.google-signin-button:hover { border-color: #668875; background: #f7faf8; }
+.login-privacy { font-size: 11px; }
+.login-error { margin: 26px 0; padding: 14px 16px; border-radius: 14px; color: #7f493f !important; background: #fff1ee; font-size: 12px; }
+.login-back { display: inline-block; margin-top: 18px; color: var(--ink); font-size: 12px; font-weight: 800; text-underline-offset: 4px; }
 @keyframes slide { from { transform: translateX(24px); opacity: 0; } }
 @keyframes blink { 0%, 70%, 100% { opacity: .25; transform: translateY(0); } 35% { opacity: 1; transform: translateY(-2px); } }
 @keyframes splashSequence {
