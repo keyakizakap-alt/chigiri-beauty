@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { ensureAppStorage, getDb } from "@/db";
 import { chatSessions, deletedChatSessions, uploadedAssets } from "@/db/schema";
+import { deletePrivateImages } from "@/server/blob-store";
 
 const ownerCookie = "chigiri_owner";
 const specialists = new Set(["skin", "hair", "body", "makeup", "nail"]);
@@ -190,10 +191,8 @@ export async function DELETE(request: Request) {
       await db.delete(uploadedAssets).where(and(eq(uploadedAssets.ownerKey, owner.key), inArray(uploadedAssets.id, references.ids)));
     }
     if (references.keys.length) {
-      try {
-        const { env } = await import("cloudflare:workers");
-        if (env.BUCKET) await env.BUCKET.delete([...new Set(references.keys)]);
-      } catch { /* The conversation is deleted even if an orphaned image needs later cleanup. */ }
+      try { await deletePrivateImages([...new Set(references.keys)]); }
+      catch { /* The conversation is deleted even if an orphaned image needs later cleanup. */ }
     }
     return json({ deleted: true }, 200, owner.setCookie);
   } catch {

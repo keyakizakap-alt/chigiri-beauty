@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { ensureAppStorage, getDb } from "@/db";
 import { chatSessions, uploadedAssets } from "@/db/schema";
+import { deletePrivateImages, getPrivateImage, putPrivateImage } from "@/server/blob-store";
 import { privateJson, requestOwner } from "@/server/request-owner";
 
 const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -9,12 +10,6 @@ const idPattern = /^[0-9a-f-]{36}$/i;
 
 function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80) || "image";
-}
-
-async function getBucket() {
-  const { env } = await import("cloudflare:workers");
-  if (!env.BUCKET) throw new Error("R2 binding unavailable");
-  return env.BUCKET;
 }
 
 export async function POST(request: Request) {
@@ -28,11 +23,7 @@ export async function POST(request: Request) {
     const id = crypto.randomUUID();
     const fileName = safeFileName(image.name);
     const key = `chat-images/${new Date().toISOString().slice(0, 10)}/${id}-${fileName}`;
-    const bucket = await getBucket();
-    await bucket.put(key, await image.arrayBuffer(), {
-      httpMetadata: { contentType: image.type, cacheControl: "private, no-store" },
-      customMetadata: { originalName: fileName },
-    });
+    await putPrivateImage(key, image);
     try {
       await ensureAppStorage();
       await (await getDb()).insert(uploadedAssets).values({
@@ -44,7 +35,7 @@ export async function POST(request: Request) {
         byteSize: image.size,
       });
     } catch (error) {
-      await bucket.delete(key);
+      await deletePrivateImages(key);
       throw error;
     }
     return privateJson({ id, name: fileName, url: `/api/uploads?id=${encodeURIComponent(id)}` }, 200, owner.setCookie);
@@ -87,14 +78,13 @@ export async function GET(request: Request) {
       if (owned) objectKey = legacyKey;
     }
     if (!objectKey) return new Response("Not found", { status: 404 });
-    const object = await (await getBucket()).get(objectKey);
-    if (!object) return new Response("Not found", { status: 404 });
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
+    const object = await getPrivateImage(objectKey);
+    if (!object || object.statusCode !== 200) return new Response("Not found", { status: 404 });
+    const headers = new Headers({ "Content-Type": object.blob.contentType });
     headers.set("Cache-Control", "private, no-store");
     headers.set("X-Content-Type-Options", "nosniff");
     if (owner.setCookie) headers.set("Set-Cookie", owner.setCookie);
-    return new Response(object.body, { headers });
+    return new Response(object.stream, { headers });
   } catch {
     return new Response("Not found", { status: 404 });
   }
@@ -112,7 +102,7 @@ export async function DELETE(request: Request) {
       .where(and(eq(uploadedAssets.ownerKey, owner.key), eq(uploadedAssets.id, id)))
       .limit(1);
     if (!rows[0]) return privateJson({ deleted: true }, 200, owner.setCookie);
-    await (await getBucket()).delete(rows[0].objectKey);
+    await deletePrivateImages(rows[0].objectKey);
     await db.delete(uploadedAssets).where(and(eq(uploadedAssets.ownerKey, owner.key), eq(uploadedAssets.id, id)));
     return privateJson({ deleted: true }, 200, owner.setCookie);
   } catch {
