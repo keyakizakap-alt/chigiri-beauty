@@ -13,14 +13,11 @@ import {
 } from "@/data/official-products";
 import { productDifference, productInsight } from "@/data/product-insights";
 import { budgetFromText } from "@/server/budget.mjs";
-import { officialProductImage } from "@/data/official-product-images";
-import type { ProductReviewEvidence } from "@/server/review-evidence";
+import type { ProductReviewEvidence, ReviewLinks } from "@/server/review-evidence";
 
 type Stage = "concern" | "skin" | "inventory" | "budget" | "complete";
 type SpecialistId = "skin" | "hair" | "body" | "makeup" | "nail";
 type ConversationPhase = "listen" | "understand" | "align" | "coach" | "propose" | "safety";
-type ReplyMode = "quick" | "balanced" | "deep";
-type CustomOwnedItem = { id: string; brand: string; name: string; category: ProductCategory; note: string | null };
 type ChatImage = { id: string; name: string; url: string };
 type ConditionEntry = {
   id: string;
@@ -53,8 +50,9 @@ type ReviewData = {
     reviewUrl: string;
     checkedAt: string;
   };
-  links?: { rakuten: string; cosme: string };
+  links?: ReviewLinks;
 };
+type ReviewSource = keyof ReviewLinks;
 type ChatSession = {
   id: string;
   title: string;
@@ -69,11 +67,9 @@ type ChatSession = {
   conversationFacts?: string[];
   knownContextKeys?: string[];
   askedContextKeys?: string[];
-  replyMode?: ReplyMode;
 };
 type MarketFilter = "all" | ProductMarket;
 type CategoryFilter = "all" | ProductCategory;
-type HistorySpecialistFilter = "all" | SpecialistId;
 type PlanFocus = {
   id: string;
   name: string;
@@ -106,6 +102,14 @@ type ChigiriPlan = {
   morning: VerifiedProduct[];
   night: VerifiedProduct[];
   reason: string;
+};
+
+type Viewer = { displayName: string };
+
+type ChigiriAppProps = {
+  viewer: Viewer | null;
+  signInPath: string;
+  signOutPath: string;
 };
 
 type ComparedPlan = ChigiriPlan & {
@@ -152,6 +156,14 @@ const inventoryPrompts: Record<SpecialistId, string> = {
 };
 
 const essentialCategories: ProductCategory[] = ["cleanser", "lotion", "moisturizer", "sunscreen"];
+
+const reviewSources: Array<{ id: ReviewSource; label: string; kind: string }> = [
+  { id: "lips", label: "LIPS", kind: "美容口コミ" },
+  { id: "cosme", label: "@cosme", kind: "美容口コミ" },
+  { id: "qoo10", label: "Qoo10", kind: "購入者レビュー" },
+  { id: "rakuten", label: "楽天市場", kind: "購入者レビュー" },
+  { id: "amazon", label: "Amazon", kind: "購入者レビュー" },
+];
 
 function keywordScore(text: string, keywords: string[]) {
   return keywords.reduce((score, keyword) => score + (text.includes(keyword.toLocaleLowerCase("ja-JP")) ? 1 : 0), 0);
@@ -347,38 +359,13 @@ function now() {
   return new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit" }).format(new Date());
 }
 
-// 表示までに少しだけ間を置き、内容量に応じた自然な会話テンポをつくる。
-// 生成モデルの品質・コストを変えず、待機中は既存のタイピング表示で伝える。
-// これは「返答までの最短時間」であって待ち時間の上乗せではない。API が
-// すでにその時間を使っていれば、追加では待たせない。
-function naturalReplyDelay(text: string, phase: ConversationPhase | undefined, mode: ReplyMode) {
-  const characters = text.replace(/\s/g, "").length;
-  const timing = mode === "quick"
-    ? { minimum: 550, maximum: 1400, base: 420, perCharacter: 4 }
-    : mode === "deep"
-      ? { minimum: 2600, maximum: 5600, base: 2200, perCharacter: 11 }
-      : { minimum: 1500, maximum: 3600, base: 1100, perCharacter: 8 };
-  const proposalExtra = phase === "propose" ? 320 : 0;
-  return Math.min(timing.maximum, Math.max(timing.minimum, timing.base + proposalExtra + characters * timing.perCharacter + Math.round(Math.random() * 260)));
-}
-
-const replyModeOptions: Array<{ id: ReplyMode; label: string; detail: string }> = [
-  { id: "quick", label: "すぐ回答", detail: "短く要点から" },
-  { id: "balanced", label: "自然な相談", detail: "会話をくみ取る" },
-  { id: "deep", label: "じっくり分析", detail: "比較と理由を丁寧に" },
-];
-
-function productImageSource(product: VerifiedProduct) {
-  return officialProductImage(product.id);
-}
-
-function productUseCaution(product: VerifiedProduct) {
-  const [firstCheck, secondCheck] = productInsight(product).checkPoints;
-  return `${firstCheck}をまず確認してください。違和感があれば使用を止め、${secondCheck ?? "使い始めた時期や重ね使い"}も一緒に振り返ると原因を切り分けやすくなります。`;
-}
-
 function nowMs() {
   return Date.now();
+}
+
+// 返答までの最短時間。応答が届いてからの上乗せではなく、送信からの総待ち時間の下限。
+function replyPauseMs() {
+  return 650 + Math.random() * 520;
 }
 
 function createSessionId() {
@@ -425,6 +412,18 @@ function parseBudget(text: string) {
 
 function marketOf(product: VerifiedProduct): ProductMarket {
   return brandMarkets[product.brand] ?? "JP";
+}
+
+function publicReviewFallback(product: VerifiedProduct, source: ReviewSource) {
+  const keyword = encodeURIComponent(`${product.brand} ${product.name}`);
+  const links: ReviewLinks = {
+    lips: `https://lipscosme.com/search?text=${keyword}`,
+    cosme: `https://www.cosme.net/search/?fw=${keyword}`,
+    qoo10: `https://www.qoo10.jp/s/${keyword}?keyword=${keyword}`,
+    rakuten: `https://search.rakuten.co.jp/search/mall/${keyword}/`,
+    amazon: `https://www.amazon.co.jp/s?k=${keyword}`,
+  };
+  return links[source];
 }
 
 const brandSearchAliases: Record<string, string> = {
@@ -486,7 +485,7 @@ function careHint(specialistId: SpecialistId, condition?: ConditionEntry | null)
   return "大きく変えず、今日の使い心地を覚えておくと、次回の相談で調整しやすくなります。";
 }
 
-export default function ChigiriApp() {
+export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriAppProps) {
   const [splashVisible, setSplashVisible] = useState(true);
   const [stage, setStage] = useState<Stage>("concern");
   const [input, setInput] = useState("");
@@ -502,27 +501,14 @@ export default function ChigiriApp() {
   const [activeSessionId, setActiveSessionId] = useState("");
   const [historyReady, setHistoryReady] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyReviewOpen, setHistoryReviewOpen] = useState(false);
-  const [historyReviewQuery, setHistoryReviewQuery] = useState("");
-  const [historySpecialistFilter, setHistorySpecialistFilter] = useState<HistorySpecialistFilter>("all");
-  const [reviewSessionId, setReviewSessionId] = useState("");
+
   const [historySyncState, setHistorySyncState] = useState<"loading" | "saved" | "saving" | "error">("loading");
   // 「保存できていない」と「読み込めなかった」は別の状態。混ぜると、サーバーには
   // 履歴があるのに「この端末には保持しています」と案内してしまう。
   const [historyLoadFailed, setHistoryLoadFailed] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [deletingSessionId, setDeletingSessionId] = useState("");
   const [specialistId, setSpecialistId] = useState<SpecialistId>("skin");
-  const [replyModes, setReplyModes] = useState<Record<SpecialistId, ReplyMode>>(() => {
-    const defaults: Record<SpecialistId, ReplyMode> = { skin: "balanced", hair: "balanced", body: "balanced", makeup: "balanced", nail: "balanced" };
-    if (typeof window === "undefined") return defaults;
-    try {
-      const stored = localStorage.getItem("chigiri-reply-modes-v1");
-      return stored ? { ...defaults, ...JSON.parse(stored) } : defaults;
-    } catch { return defaults; }
-  });
-  const [customItems, setCustomItems] = useState<CustomOwnedItem[]>([]);
-  const [customItemDraft, setCustomItemDraft] = useState({ brand: "", name: "", category: "moisturizer" as ProductCategory, note: "" });
-  const [customItemSaving, setCustomItemSaving] = useState(false);
   const [productQuery, setProductQuery] = useState("");
   const [marketFilter, setMarketFilter] = useState<MarketFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
@@ -542,6 +528,7 @@ export default function ChigiriApp() {
   const [detailProductId, setDetailProductId] = useState<string | null>(null);
   const [reviewData, setReviewData] = useState<ReviewData | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewSource, setReviewSource] = useState<ReviewSource>("lips");
   const [serviceNotice, setServiceNotice] = useState("");
   const imageInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -560,10 +547,6 @@ export default function ChigiriApp() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("chigiri-reply-modes-v1", JSON.stringify(replyModes));
-  }, [replyModes]);
-
-  useEffect(() => {
     if (!detailProductId) return;
     const controller = new AbortController();
     fetch(`/api/reviews?productId=${encodeURIComponent(detailProductId)}`, { signal: controller.signal })
@@ -580,7 +563,6 @@ export default function ChigiriApp() {
   useEffect(() => {
     const layers: Array<[boolean, () => void]> = [
       [Boolean(detailProductId), () => setDetailProductId(null)],
-      [historyReviewOpen, () => setHistoryReviewOpen(false)],
       [planOpen, () => setPlanOpen(false)],
       [conditionOpen, () => setConditionOpen(false)],
       [shelfOpen, () => setShelfOpen(false)],
@@ -593,7 +575,7 @@ export default function ChigiriApp() {
     };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [conditionOpen, detailProductId, historyOpen, historyReviewOpen, planOpen, shelfOpen]);
+  }, [conditionOpen, detailProductId, historyOpen, planOpen, shelfOpen]);
 
   useEffect(() => {
     if (!historyReady) return;
@@ -604,18 +586,22 @@ export default function ChigiriApp() {
   }, [historyReady]);
 
   useEffect(() => {
-    if (!historyReady) return;
-    fetch("/api/owned-items", { credentials: "same-origin" })
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error("load failed")))
-      .then((data: { items?: CustomOwnedItem[] }) => setCustomItems(data.items ?? []))
-      .catch(() => undefined);
-  }, [historyReady]);
-
-  useEffect(() => {
     const timer = window.setTimeout(() => {
       void (async () => {
         const cached = mergeSessions(storedSessions(historyCacheKey), storedSessions(historyOutboxKey));
         if (cached.length) setSessions(cached);
+        // アカウント移行は独立させる。ここで失敗しても履歴の読み込みは続ける。
+        if (viewer) {
+          try {
+            const migration = await fetch("/api/account/migrate", {
+              method: "POST",
+              credentials: "same-origin",
+            });
+            if (!migration.ok) setServiceNotice("端末内の過去ログは移行できませんでしたが、新しい相談はアカウントに保存されます。");
+          } catch {
+            setServiceNotice("端末内の過去ログは移行できませんでしたが、新しい相談はアカウントに保存されます。");
+          }
+        }
         {
           const currentSource = localStorage.getItem(chatStorageKey);
           let migratable: ChatSession[] = [];
@@ -663,7 +649,6 @@ export default function ChigiriApp() {
           } catch {
             setHistorySyncState("error");
           }
-
           // Keep past consultations available, but always open on a fresh chat.
           // A previous conversation resumes only when the user selects it.
           setActiveSessionId(createSessionId());
@@ -672,7 +657,7 @@ export default function ChigiriApp() {
       })();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [viewer]);
 
   useEffect(() => {
     if (!historyReady || !activeSessionId) return;
@@ -691,13 +676,12 @@ export default function ChigiriApp() {
       conversationFacts,
       knownContextKeys,
       askedContextKeys,
-      replyMode: replyModes[specialistId],
     };
     const revision = ++saveRevisionRef.current;
     const timer = window.setTimeout(() => {
       setSessions((previous) => {
         const next = [current, ...previous.filter((session) => session.id !== activeSessionId)]
-          .filter((session) => session.id === activeSessionId || session.messages.some((message) => message.role === "user"));
+          .filter((session) => session.messages.some((message) => message.role === "user"));
         storeSessions(historyCacheKey, next);
         return next;
       });
@@ -719,7 +703,7 @@ export default function ChigiriApp() {
       });
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [activeSessionId, askedContextKeys, budget, conversationFacts, conversationPhase, historyReady, knownContextKeys, messages, replyModes, selectedIds, specialistId, stage, suggestedReplies]);
+  }, [activeSessionId, askedContextKeys, budget, conversationFacts, conversationPhase, historyReady, knownContextKeys, messages, selectedIds, specialistId, stage, suggestedReplies]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -755,27 +739,18 @@ export default function ChigiriApp() {
   );
   const activeSpecialist = specialists.find((item) => item.id === specialistId) ?? specialists[0];
   const visibleSessions = useMemo(
-    () => sessions,
-    [sessions]
+    () => sessions.filter((session) => session.specialistId === specialistId),
+    [sessions, specialistId]
   );
-  const reviewSessions = useMemo(() => {
-    const query = historyReviewQuery.trim().toLocaleLowerCase("ja-JP");
-    return sessions.filter((session) => {
-      if (historySpecialistFilter !== "all" && session.specialistId !== historySpecialistFilter) return false;
-      if (!query) return true;
-      const searchable = [session.title, ...session.messages.map((message) => message.text)].join(" ").toLocaleLowerCase("ja-JP");
-      return searchable.includes(query);
-    });
-  }, [historyReviewQuery, historySpecialistFilter, sessions]);
-  const reviewSession = reviewSessions.find((session) => session.id === reviewSessionId)
-    ?? sessions.find((session) => session.id === reviewSessionId)
-    ?? reviewSessions[0]
-    ?? null;
   const specialistConditions = useMemo(
     () => conditions.filter((entry) => entry.specialistId === specialistId).sort((a, b) => b.recordedAt.localeCompare(a.recordedAt)),
     [conditions, specialistId]
   );
   const latestCondition = specialistConditions[0];
+  const conversationConditions = useMemo(
+    () => specialistConditions.slice(0, 1),
+    [specialistConditions]
+  );
   const detailProduct = products.find((product) => product.id === detailProductId) ?? null;
   const detailInsight = detailProduct ? productInsight(detailProduct) : null;
   const lastRecommendedProduct = [...messages]
@@ -818,6 +793,7 @@ export default function ChigiriApp() {
   }, [latestConditions, selectedProducts]);
 
   function openProductInsight(productId: string) {
+    setReviewSource("lips");
     setReviewLoading(true);
     setReviewData(null);
     setDetailProductId(productId);
@@ -852,9 +828,7 @@ export default function ChigiriApp() {
           input: visibleText,
           images: imagesToSend.map((image) => image.url),
           ownedProductIds: selectedIds,
-          customOwnedItems: customItems,
-          replyMode: replyModes[specialistId],
-          conditions: latestConditions,
+          conditions: conversationConditions,
           history: messages.map(({ role, text }) => ({ role, text })).slice(-20),
           memory: {
             knownKeys: knownContextKeys,
@@ -865,9 +839,9 @@ export default function ChigiriApp() {
       const data = (await response.json()) as { text?: string; recommendedProducts?: VerifiedProduct[]; recommendationReviews?: ProductReviewEvidence[]; conversationPhase?: ConversationPhase; suggestedReplies?: string[]; conversationFacts?: string[]; knownContextKeys?: string[]; askedContextKeys?: string[]; mode?: string };
       const userTurnCount = messages.filter((message) => message.role === "user").length + 1;
       const shouldEnterInventory = stage === "concern"
-        && selectedIds.length === 0 && customItems.length === 0
+        && selectedIds.length === 0
         && userTurnCount >= 2
-        && ["understand", "align", "propose"].includes(data.conversationPhase ?? "understand");
+        && ["align", "propose"].includes(data.conversationPhase ?? "understand");
       const nextStage: Stage = shouldEnterInventory
         ? "inventory"
         : stage === "inventory"
@@ -881,7 +855,9 @@ export default function ChigiriApp() {
       // ピッカーの見出し（inventoryPrompts）が担当し、質問が二重に並ばないようにする。
       const assistantText = data.text ?? "うまくお返事をまとめられませんでした。少し言い換えて、もう一度送ってもらえますか？";
       setServiceNotice(data.mode === "local-fallback" ? "今は基本のケア案内でお返ししています。詳しいパーソナル提案は、少し時間をおいてお試しください。" : "");
-      const remainingPause = naturalReplyDelay(assistantText, data.conversationPhase, replyModes[specialistId]) - (nowMs() - requestStartedAt);
+      // 応答が届いてからの固定待ちは、APIがすでに使った時間への上乗せになる。
+      // 送信からの経過を差し引き、足りない分だけ待つ。
+      const remainingPause = replyPauseMs() - (nowMs() - requestStartedAt);
       if (remainingPause > 0) await new Promise((resolve) => setTimeout(resolve, remainingPause));
       setMessages((current) => [
         ...current,
@@ -1024,8 +1000,8 @@ export default function ChigiriApp() {
   }
 
   function finishInventory() {
-    if ((!selectedIds.length && !customItems.length) || busy) return;
-    const summary = [...selectedProducts.map((product) => `${product.brand} ${product.name}`), ...customItems.map((item) => `${item.brand} ${item.name}`.trim())].join("、");
+    if (!selectedIds.length || busy) return;
+    const summary = selectedProducts.map((product) => `${product.brand} ${product.name}`).join("、");
     void send(summary);
   }
 
@@ -1065,22 +1041,8 @@ export default function ChigiriApp() {
     setConversationFacts(session.conversationFacts ?? []);
     setKnownContextKeys(session.knownContextKeys ?? []);
     setAskedContextKeys(session.askedContextKeys ?? []);
-    if (session.replyMode) setReplyModes((current) => ({ ...current, [session.specialistId]: session.replyMode! }));
     setInput("");
     setHistoryOpen(false);
-  }
-
-  function openHistoryReview(session?: ChatSession) {
-    const target = session ?? sessions.find((item) => item.id === activeSessionId) ?? sessions[0];
-    setReviewSessionId(target?.id ?? "");
-    setHistoryReviewOpen(true);
-    setHistoryOpen(false);
-  }
-
-  function resumeReviewedSession() {
-    if (!reviewSession) return;
-    openSession(reviewSession);
-    setHistoryReviewOpen(false);
   }
 
   function chooseSpecialist(nextId: SpecialistId) {
@@ -1100,7 +1062,6 @@ export default function ChigiriApp() {
       conversationFacts,
       knownContextKeys,
       askedContextKeys,
-      replyMode: replyModes[specialistId],
     };
     const saved = [currentSnapshot, ...sessions.filter((session) => session.id !== activeSessionId)]
       .filter((session) => session.messages.some((message) => message.role === "user"));
@@ -1157,35 +1118,26 @@ export default function ChigiriApp() {
     }
   }
 
-  async function addCustomItem() {
-    if (!customItemDraft.name.trim() || customItemSaving) return;
-    setCustomItemSaving(true);
+  async function deleteSession(session: ChatSession) {
+    if (busy || deletingSessionId) return;
+    if (!window.confirm(`「${session.title}」を削除しますか？\nこの操作は取り消せません。`)) return;
+    setDeletingSessionId(session.id);
+    saveRevisionRef.current += 1;
     try {
-      const response = await fetch("/api/owned-items", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(customItemDraft),
-      });
-      if (!response.ok) throw new Error("save failed");
-      const data = await response.json() as { item: CustomOwnedItem };
-      setCustomItems((current) => [data.item, ...current.filter((item) => item.id !== data.item.id)]);
-      setCustomItemDraft({ brand: "", name: "", category: "moisturizer", note: "" });
+      const response = await fetch(`/api/consultations?id=${encodeURIComponent(session.id)}`, { method: "DELETE", credentials: "same-origin" });
+      if (!response.ok) throw new Error("history delete failed");
+      const remaining = sessions.filter((item) => item.id !== session.id);
+      setSessions(remaining);
+      storeSessions(historyCacheKey, remaining);
+      removeCachedSession(historyOutboxKey, session.id);
+      if (session.id === activeSessionId) {
+        startNewSession();
+      }
+      setHistorySyncState("saved");
     } catch {
-      window.alert("マイアイテムを追加できませんでした。通信状態を確認してください。");
+      window.alert("相談ログを削除できませんでした。通信状態を確認して、もう一度お試しください。");
     } finally {
-      setCustomItemSaving(false);
-    }
-  }
-
-  async function removeCustomItem(id: string) {
-    if (!window.confirm("このマイアイテムを一覧から外しますか？")) return;
-    try {
-      const response = await fetch(`/api/owned-items?id=${encodeURIComponent(id)}`, { method: "DELETE", credentials: "same-origin" });
-      if (!response.ok) throw new Error("delete failed");
-      setCustomItems((current) => current.filter((item) => item.id !== id));
-    } catch {
-      window.alert("マイアイテムを外せませんでした。通信状態を確認してください。");
+      setDeletingSessionId("");
     }
   }
 
@@ -1240,38 +1192,30 @@ export default function ChigiriApp() {
         <div className="history-panel">
           <div className="history-head">
             <div>
-              <div className="eyebrow">チャット</div>
+              <div className="eyebrow">これまでの相談</div>
               <h3>相談履歴</h3>
             </div>
-            <div className="history-head-actions">
-              <button type="button" onClick={startNewSession} aria-label="新しい相談を始める">＋</button>
-            </div>
+            <button type="button" onClick={startNewSession} aria-label="新しい相談を始める">＋</button>
           </div>
           <div className="history-list">
             {visibleSessions.length ? visibleSessions.map((session) => {
-              const sessionSpecialist = specialists.find((item) => item.id === session.specialistId) ?? specialists[0];
+              const lastMessage = session.messages[session.messages.length - 1]?.text ?? "";
               return (
                 <div
                   key={session.id}
                   className={`history-row ${session.id === activeSessionId ? "active" : ""}`}
                 >
-                  <button
-                    type="button"
-                    className="history-item"
-                    onClick={() => openSession(session)}
-                    aria-current={session.id === activeSessionId ? "page" : undefined}
-                    title={`${session.title} — ${sessionSpecialist.name}`}
-                  >
-                    <span className="history-title"><b>{session.title}</b></span>
-                    <span className="history-item-actions" aria-hidden="true"><span>{sessionSpecialist.name}</span><time>{sessionTime(session.updatedAt)}</time></span>
+                  <button type="button" className="history-item" onClick={() => openSession(session)}>
+                    <span className="history-title"><b>{session.title}</b><time>{sessionTime(session.updatedAt)}</time></span>
+                    <span className="history-preview">{lastMessage.replace(/\n/g, " ").slice(0, 42)}</span>
                   </button>
+                  <button type="button" className="history-delete" onClick={() => void deleteSession(session)} disabled={deletingSessionId === session.id} aria-label={`${session.title}を削除`} title="この相談ログを削除">{deletingSessionId === session.id ? "…" : "×"}</button>
                 </div>
               );
             }) : historyLoading ? <p className="history-empty">相談ログを読み込んでいます…</p>
               : historyLoadFailed ? null
-                : <p className="history-empty">相談を始めると、ここにチャット履歴が残ります。</p>}
+                : <p className="history-empty">{activeSpecialist.name}との相談を始めると、ここからあとで振り返れます。</p>}
           </div>
-          {visibleSessions.length ? <button type="button" className="history-review-link" onClick={() => openHistoryReview()}>履歴を検索・すべて見る</button> : null}
           {historyLoadFailed ? (
             <>
               <p className="history-retention error">過去の相談を読み込めませんでした。保存済みの内容は残っています。</p>
@@ -1282,8 +1226,9 @@ export default function ChigiriApp() {
           ) : (
             <>
               <p className={`history-retention ${historySyncState === "error" ? "error" : ""}`}>
-                {historySyncState === "loading" ? "すべての相談ログを読み込んでいます" : historySyncState === "saving" ? "相談内容を保存中" : historySyncState === "error" ? "この端末には保持しています。再同期してください" : "相談ログは削除せず、すべて保存します"}
+                {historySyncState === "loading" ? "相談履歴を読み込んでいます" : historySyncState === "saving" ? "相談内容を保存中" : historySyncState === "error" ? "この端末には保持しています。再同期してください" : viewer ? "相談内容はいつでも見返せます（アカウント保存）" : "この端末で相談内容を見返せます"}
               </p>
+              {!viewer ? <a className="history-signin" href={signInPath}>ログインして端末をまたいで履歴を残す</a> : null}
               {historySyncState === "error" ? <button type="button" className="history-more" onClick={() => void retryHistorySync()}>相談履歴を再同期</button> : null}
             </>
           )}
@@ -1300,10 +1245,18 @@ export default function ChigiriApp() {
             <div className="status">{activeSpecialist.name} · {activeSpecialist.role}</div>
           </div>
           <div className="topbar-actions">
-            <button className="utility-button history-review-button" onClick={() => openHistoryReview()}>相談ログ</button>
             <button className="utility-button plan-button" onClick={() => setPlanOpen(true)}>今日のプラン</button>
             <button className="utility-button condition-button" onClick={() => setConditionOpen(true)}>今日の調子</button>
-            <button className="utility-button shelf-button" onClick={() => setShelfOpen(true)}>マイアイテム{selectedIds.length + customItems.length ? ` ${selectedIds.length + customItems.length}` : ""}</button>
+            <button className="utility-button shelf-button" onClick={() => setShelfOpen(true)}>マイアイテム{selectedIds.length ? ` ${selectedIds.length}` : ""}</button>
+            <a
+              className={`account-button ${viewer ? "signed-in" : ""}`}
+              href={viewer ? signOutPath : signInPath}
+              aria-label={viewer ? `${viewer.displayName}としてログイン中。ログアウトする` : "ログインする"}
+              title={viewer ? `${viewer.displayName}としてログイン中` : "ログインして履歴を保存"}
+            >
+              <span className="account-avatar" aria-hidden="true">{viewer ? viewer.displayName.slice(0, 1).toLocaleUpperCase("ja-JP") : "↗"}</span>
+              <span className="account-copy"><b>{viewer ? viewer.displayName : "ログイン"}</b><small>{viewer ? "アカウント保存" : "履歴を保存"}</small></span>
+            </a>
           </div>
         </header>
 
@@ -1312,13 +1265,6 @@ export default function ChigiriApp() {
             <div className="eyebrow">{activeSpecialist.name} · {activeSpecialist.role}</div>
             <h1>今の悩みを、<br />そのまま聞かせてください。</h1>
             <p>普段使っているものや、いつもの過ごし方も教えてください。</p>
-            <div className="reply-mode-picker" aria-label={`${activeSpecialist.name}の返答モード`}>
-              {replyModeOptions.map((mode) => (
-                <button type="button" key={mode.id} className={replyModes[specialistId] === mode.id ? "active" : ""} onClick={() => setReplyModes((current) => ({ ...current, [specialistId]: mode.id }))} aria-pressed={replyModes[specialistId] === mode.id}>
-                  <b>{mode.label}</b><span>{mode.detail}</span>
-                </button>
-              ))}
-            </div>
             {serviceNotice ? <div className="service-notice" role="status">{serviceNotice}</div> : null}
           </section>
 
@@ -1333,25 +1279,10 @@ export default function ChigiriApp() {
                       {message.recommendedProducts.map((product) => {
                         const evidence = message.recommendationReviews?.find((item) => item.productId === product.id);
                         return <article className="message-product-card" key={product.id}>
-                          <div className="message-product-heading">
-                            <img
-                              className="product-photo"
-                              src={productImageSource(product)}
-                              alt={`${product.brand} ${product.name}の公式商品写真`}
-                              loading="lazy"
-                              onError={(event) => { event.currentTarget.hidden = true; }}
-                            />
-                            <div>
-                              <span>{categoryLabels[product.category]}の候補</span>
-                              <b>{product.brand}</b>
-                              <strong>{product.name}</strong>
-                            </div>
-                          </div>
+                          <span>{categoryLabels[product.category]}の候補</span>
+                          <b>{product.brand}</b>
+                          <strong>{product.name}</strong>
                           <p>{product.claims[0]}</p>
-                          <aside className="product-caution" role="note" aria-label={`${product.name}を使う前の注意`}>
-                            <strong>使う前の注意</strong>
-                            <p>{productUseCaution(product)}</p>
-                          </aside>
                           <div className="proposal-review" aria-label={`${product.name}の口コミ情報`}>
                             <span>口コミ</span>
                             {evidence?.review.status === "available" ? (
@@ -1359,7 +1290,7 @@ export default function ChigiriApp() {
                             ) : (
                               <p>数値評価は未取得です。最新情報は投稿元で確認できます。</p>
                             )}
-                            <a href={evidence?.review.reviewUrl ?? evidence?.links.rakuten ?? `https://search.rakuten.co.jp/search/mall/${encodeURIComponent(`${product.brand} ${product.name}`)}/`} target="_blank" rel="noopener noreferrer">口コミを確認する ↗</a>
+                            <button type="button" className="proposal-review-open" onClick={() => openProductInsight(product.id)}>サイトを選んで口コミを見る</button>
                             <small>評価は参考情報です。使用感には個人差があります。</small>
                           </div>
                           <div>
@@ -1384,7 +1315,7 @@ export default function ChigiriApp() {
             {busy && (
               <div className="message">
                 <div className="avatar" aria-label="CHIGIRI" />
-                <div className="typing" aria-label="返信を考えています"><i /><i /><i /><span>回答を考えています…</span></div>
+                <div className="typing" aria-label="返信を考えています"><i /><i /><i /></div>
               </div>
             )}
 
@@ -1403,7 +1334,7 @@ export default function ChigiriApp() {
                     <strong>{inventoryPrompts[specialistId]}</strong>
                     <small>見つからない場合は、下の入力欄からそのまま伝えても大丈夫です。</small>
                   </div>
-                  <span>{selectedIds.length + customItems.length}件登録中</span>
+                  <span>{selectedIds.length}件選択中</span>
                 </div>
                 <div className="product-filters">
                   <input
@@ -1450,8 +1381,8 @@ export default function ChigiriApp() {
                       className={`product-option ${selectedIds.includes(product.id) ? "selected" : ""}`}
                       onClick={() => toggleProduct(product.id)}
                     >
-                      <b>{product.brand}<small>｜ {product.name}</small></b>
-                      <span>{marketOf(product) === "JP" ? "日本" : "韓国"} · {categoryLabels[product.category]}</span>
+                      <b>{product.brand} · {marketOf(product) === "JP" ? "日本" : "韓国"} · {categoryLabels[product.category]}</b>
+                      <span>{product.name}</span>
                     </button>
                   ))}
                   {!specialistVisibleProducts.length && (
@@ -1460,7 +1391,7 @@ export default function ChigiriApp() {
                 </div>
                 <div className="picker-actions">
                   <button className="picker-skip" onClick={() => void send("手持ちはまだ登録していません")}>まだ分からない</button>
-                  <button className="picker-done" disabled={!selectedIds.length && !customItems.length} onClick={finishInventory}>この内容で相談する</button>
+                  <button className="picker-done" disabled={!selectedIds.length} onClick={finishInventory}>この内容で相談する</button>
                 </div>
               </div>
             )}
@@ -1506,19 +1437,10 @@ export default function ChigiriApp() {
                   {result.recommendation ? (
                     <article className="recommendation purchase-card">
                       <div className="purchase-heading">
-                        <div className="purchase-product-media">
-                          <img
-                            className="product-photo purchase-photo"
-                            src={productImageSource(result.recommendation)}
-                            alt={`${result.recommendation.brand} ${result.recommendation.name}の公式商品写真`}
-                            loading="lazy"
-                            onError={(event) => { event.currentTarget.hidden = true; }}
-                          />
-                          <div>
-                            <span className="product-kicker">必要なら追加するもの · {categoryLabels[result.recommendation.category]}</span>
-                            <h4>{result.recommendation.brand}</h4>
-                            <h3>{result.recommendation.name}</h3>
-                          </div>
+                        <div>
+                          <span className="product-kicker">必要なら追加するもの · {categoryLabels[result.recommendation.category]}</span>
+                          <h4>{result.recommendation.brand}</h4>
+                          <h3>{result.recommendation.name}</h3>
                         </div>
                         <div className="purchase-price">
                           <strong>{priceText(result.recommendation)}</strong>
@@ -1530,10 +1452,6 @@ export default function ChigiriApp() {
                         <h5>どんなアイテム？</h5>
                         <p>{result.recommendation.claims?.[0] ?? "詳しい特徴は商品ページで確認できます。"}</p>
                       </div>
-                      <aside className="product-caution purchase-caution" role="note" aria-label={`${result.recommendation.name}を使う前の注意`}>
-                        <strong>使う前の注意</strong>
-                        <p>{productUseCaution(result.recommendation)}</p>
-                      </aside>
 
                       {!!result.recommendation.ingredientHighlights?.length && (
                         <div className="ingredient-list" aria-label="公式ページで確認した注目成分">
@@ -1618,68 +1536,6 @@ export default function ChigiriApp() {
         </div>
       </main>
 
-      {historyReviewOpen && (
-        <div className="history-review-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryReviewOpen(false); }}>
-          <section className="history-review-dialog" role="dialog" aria-modal="true" aria-labelledby="history-review-title">
-            <header className="history-review-header">
-              <div>
-                <div className="eyebrow">Consultation log</div>
-                <h2 id="history-review-title">これまでの相談を見返す</h2>
-                <p>相談内容と回答を、会話の流れのまま確認できます。</p>
-              </div>
-              <button type="button" className="close" onClick={() => setHistoryReviewOpen(false)} aria-label="相談ログを閉じる">×</button>
-            </header>
-
-            <div className="history-review-tools">
-              <input type="search" value={historyReviewQuery} onChange={(event) => setHistoryReviewQuery(event.target.value)} placeholder="相談内容を検索" aria-label="相談ログを検索" />
-              <div className="history-specialist-filters" aria-label="担当者で絞り込む">
-                <button type="button" className={historySpecialistFilter === "all" ? "active" : ""} onClick={() => setHistorySpecialistFilter("all")}>すべて</button>
-                {specialists.map((specialist) => <button type="button" key={specialist.id} className={historySpecialistFilter === specialist.id ? "active" : ""} onClick={() => setHistorySpecialistFilter(specialist.id)}>{specialist.name}</button>)}
-              </div>
-            </div>
-
-            <div className="history-review-layout">
-              <nav className="history-review-list" aria-label="保存済みの相談ログ">
-                <div className="history-review-count">{reviewSessions.length}件の相談</div>
-                {reviewSessions.length ? reviewSessions.map((session) => {
-                  const specialist = specialists.find((item) => item.id === session.specialistId) ?? specialists[0];
-                  const userTurns = session.messages.filter((message) => message.role === "user").length;
-                  return <button type="button" key={session.id} className={reviewSession?.id === session.id ? "active" : ""} onClick={() => setReviewSessionId(session.id)} aria-pressed={reviewSession?.id === session.id}>
-                    <span><b>{specialist.name}</b><time>{new Intl.DateTimeFormat("ja-JP", { year: "numeric", month: "short", day: "numeric" }).format(new Date(session.updatedAt))}</time></span>
-                    <strong>{session.title}</strong>
-                    <small>{userTurns}往復 · {session.messages.at(-1)?.text.replace(/\n/g, " ").slice(0, 46)}</small>
-                  </button>;
-                }) : <p className="history-review-empty">条件に合う相談ログはありません。</p>}
-              </nav>
-
-              <article className="history-transcript" aria-live="polite">
-                {reviewSession ? <>
-                  <div className="history-transcript-head">
-                    <div>
-                      <span>{specialists.find((item) => item.id === reviewSession.specialistId)?.name} · {specialists.find((item) => item.id === reviewSession.specialistId)?.role}</span>
-                      <h3>{reviewSession.title}</h3>
-                      <time>{new Intl.DateTimeFormat("ja-JP", { dateStyle: "long", timeStyle: "short" }).format(new Date(reviewSession.updatedAt))}</time>
-                    </div>
-                    <button type="button" onClick={resumeReviewedSession}>この相談を再開</button>
-                  </div>
-                  <div className="history-transcript-messages">
-                    {reviewSession.messages.map((message) => <div className={`history-transcript-message ${message.role}`} key={message.id}>
-                      <span>{message.role === "user" ? "あなた" : specialists.find((item) => item.id === reviewSession.specialistId)?.name}</span>
-                      <div>{message.text}</div>
-                      {!!message.recommendedProducts?.length && <section className="history-transcript-products" aria-label="この回答で提案した商品">
-                        <b>この回答で提案した商品</b>
-                        {message.recommendedProducts.map((product) => <button type="button" key={product.id} onClick={() => { setHistoryReviewOpen(false); openProductInsight(product.id); }}><span>{product.brand}</span>{product.name}</button>)}
-                      </section>}
-                      <time>{message.time}</time>
-                    </div>)}
-                  </div>
-                </> : <div className="history-transcript-placeholder"><b>相談ログを選択してください</b><span>左の一覧から、読み返したい相談を選べます。</span></div>}
-              </article>
-            </div>
-          </section>
-        </div>
-      )}
-
       {planOpen && (
         <aside className="catalog-panel daily-plan-panel" aria-label="今日のビューティープラン">
           <div className="catalog-head">
@@ -1726,27 +1582,6 @@ export default function ChigiriApp() {
             </div>
             <button className="close" onClick={() => setShelfOpen(false)} aria-label="閉じる">×</button>
           </div>
-          <section className="custom-item-section" aria-labelledby="custom-item-title">
-            <div>
-              <h3 id="custom-item-title">手元の商品を自分で追加</h3>
-              <p>公式20商品にないものも登録できます。自己登録の商品情報は、AIが推測で補完しません。</p>
-            </div>
-            <div className="custom-item-form">
-              <input value={customItemDraft.brand} onChange={(event) => setCustomItemDraft((current) => ({ ...current, brand: event.target.value }))} placeholder="ブランド（任意）" aria-label="ブランド名" />
-              <input value={customItemDraft.name} onChange={(event) => setCustomItemDraft((current) => ({ ...current, name: event.target.value }))} placeholder="商品名" aria-label="商品名" />
-              <select value={customItemDraft.category} onChange={(event) => setCustomItemDraft((current) => ({ ...current, category: event.target.value as ProductCategory }))} aria-label="商品カテゴリ">
-                {Object.entries(categoryLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
-              </select>
-              <input value={customItemDraft.note} onChange={(event) => setCustomItemDraft((current) => ({ ...current, note: event.target.value }))} placeholder="使い方・気になる点（任意）" aria-label="商品メモ" />
-              <button type="button" onClick={() => void addCustomItem()} disabled={!customItemDraft.name.trim() || customItemSaving}>{customItemSaving ? "追加中…" : "マイアイテムに追加"}</button>
-            </div>
-            {customItems.length ? <div className="custom-item-list">
-              {customItems.map((item) => <article key={item.id}>
-                <div><span>{item.brand || "ブランド未入力"} · {categoryLabels[item.category]}</span><b>{item.name}</b>{item.note ? <small>{item.note}</small> : null}</div>
-                <button type="button" onClick={() => void removeCustomItem(item.id)} aria-label={`${item.name}をマイアイテムから外す`}>外す</button>
-              </article>)}
-            </div> : null}
-          </section>
           <div className="product-filters catalog-filters">
             <input
               type="search"
@@ -1784,7 +1619,7 @@ export default function ChigiriApp() {
               ))}
             </select>
           </div>
-          <div className="filter-summary">公式商品 {visibleProducts.length}件中 {displayedProducts.length}件を表示 · マイアイテム {selectedIds.length + customItems.length}件</div>
+          <div className="filter-summary">{visibleProducts.length}件中 {displayedProducts.length}件を表示 · 選択中 {selectedIds.length}件</div>
           <div className="catalog-list shelf-list">
             {displayedProducts.map((product) => (
               <article className={`catalog-item shelf-item ${selectedIds.includes(product.id) ? "selected" : ""}`} key={product.id}>
@@ -1910,10 +1745,13 @@ export default function ChigiriApp() {
                 <p>最新の評価は、各サイトで確認できます。</p>
               )}
               <div className="review-links">
-                <a href={reviewData?.review?.reviewUrl ?? reviewData?.links?.rakuten ?? `https://search.rakuten.co.jp/search/mall/${encodeURIComponent(`${detailProduct.brand} ${detailProduct.name}`)}/`} target="_blank" rel="noopener noreferrer">楽天市場で評価を見る ↗</a>
-                <a href={reviewData?.links?.cosme ?? `https://www.cosme.net/search/?fw=${encodeURIComponent(`${detailProduct.brand} ${detailProduct.name}`)}`} target="_blank" rel="noopener noreferrer">@cosmeで口コミを見る ↗</a>
+                <label htmlFor="review-source">確認するサイト</label>
+                <select id="review-source" value={reviewSource} onChange={(event) => setReviewSource(event.target.value as ReviewSource)}>
+                  {reviewSources.map((source) => <option key={source.id} value={source.id}>{source.label}（{source.kind}）</option>)}
+                </select>
+                <a href={reviewData?.links?.[reviewSource] ?? publicReviewFallback(detailProduct, reviewSource)} target="_blank" rel="noopener noreferrer">{reviewSources.find((source) => source.id === reviewSource)?.label}で確認する ↗</a>
               </div>
-              <small>肌質や髪質、使い方が近い人の感想を参考にしてください。</small>
+              <small>口コミは個人の感想です。Qoo10・楽天市場・Amazonでは販売元が公式または正規店かも確認してください。</small>
             </section>
 
             <a className="official-detail-link" href={detailProduct.officialUrl} target="_blank" rel="noopener noreferrer">公式の商品情報を確認する ↗</a>
