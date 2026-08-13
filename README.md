@@ -25,10 +25,28 @@ Next.js App RouterをVercelへ直接デプロイできる構成です。相談�
 | `TURSO_DATABASE_URL` | 相談履歴・コンディション・画像台帳の保存先 | 必須。Vercel MarketplaceのTurso連携で設定 |
 | `TURSO_AUTH_TOKEN` | Tursoへの接続トークン | 必須。Vercel MarketplaceのTurso連携で設定 |
 | `BLOB_READ_WRITE_TOKEN` | 非公開画像を保存するVercel Blobトークン | 必須。Blobストア接続時に設定。Vercel上ではOIDC利用も可 |
+| `GOOGLE_CLIENT_ID` | Googleアカウントログイン（OpenID Connect） | ログインを使う場合は必須 |
+| `GOOGLE_CLIENT_SECRET` | Googleの認可コードをトークンへ交換する | ログインを使う場合は必須 |
+| `AUTH_SECRET` | セッションCookieの署名鍵（32文字以上のランダム値） | ログインを使う場合は必須 |
+| `GOOGLE_REDIRECT_URI` | リダイレクトURIの固定値 | 任意。未設定時はリクエストのホストから組み立て |
+
+3つが揃っていない環境ではログイン導線を表示せず、相談履歴は端末ごとのゲスト保存だけを使います。
 
 秘密値はVercelのEnvironment Variablesで管理し、リポジトリやログへ保存しません。楽天の認証情報がない場合も、楽天市場・@cosmeの検索導線は利用できます。
 
 ローカルでは`.env.example`を`.env.local`へコピーし、必要な値だけ設定してください。実値を含む`.env*`はGit管理対象外です。
+
+## Googleアカウントログイン
+
+ログインはアプリ内のOpenID Connect（認可コード＋PKCE）で完結します。
+
+1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials)で「OAuth 2.0 クライアント ID」（種類: ウェブアプリケーション）を作成します。
+2. 承認済みのリダイレクトURIへ、デプロイ先ごとに `https://<ドメイン>/api/auth/google/callback` を登録します（ローカルは `http://localhost:3000/api/auth/google/callback`）。
+3. `GOOGLE_CLIENT_ID`・`GOOGLE_CLIENT_SECRET`・`AUTH_SECRET`（`openssl rand -base64 32` などで生成）を環境変数へ登録します。
+
+ログイン後は、メールアドレスのSHA-256から作る所有者キーへ相談ログ・コンディション・画像台帳を紐づけます。メールアドレス自体はHttpOnlyの署名付きCookieにだけ保持し、データベースへは保存しません。ログイン前に同じ端末で残した相談ログは、初回ログイン時に`/api/account/migrate`でアカウントへ移ります。
+
+ChatGPT Sites（SIWC）で配信する場合は、これまでどおりプラットフォームが注入する`oai-authenticated-user-email`ヘッダーも利用できます。
 
 ## Architecture
 

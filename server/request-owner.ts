@@ -1,21 +1,18 @@
-const ownerCookie = "chigiri_owner";
+import { authenticatedEmail, cookieValue } from "@/server/auth";
 
-function cookieValue(request: Request, name: string) {
-  const cookies = request.headers.get("cookie") ?? "";
-  for (const item of cookies.split(";")) {
-    const [key, ...value] = item.trim().split("=");
-    if (key === name) return decodeURIComponent(value.join("="));
-  }
-  return null;
-}
+const ownerCookie = "chigiri_owner";
 
 async function sha256(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * 保存データの所有者キー。Googleログイン中はアカウント、未ログイン時は
+ * 端末のゲストCookieに紐づける。SIWCヘッダーがある環境でも同じ形になる。
+ */
 export async function requestOwner(request: Request) {
-  const email = request.headers.get("oai-authenticated-user-email")?.trim().toLowerCase();
+  const email = await authenticatedEmail(request);
   if (email) return { key: `user:${await sha256(email)}`, setCookie: null as string | null };
 
   const current = cookieValue(request, ownerCookie);

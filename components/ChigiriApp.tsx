@@ -110,6 +110,8 @@ type ChigiriAppProps = {
   viewer: Viewer | null;
   signInPath: string;
   signOutPath: string;
+  /** Googleログインの設定が揃っているか。未設定のまま導線だけ出すと押しても失敗する。 */
+  signInAvailable?: boolean;
 };
 
 type ComparedPlan = ChigiriPlan & {
@@ -340,6 +342,16 @@ async function syncSessionBatch(sessions: ChatSession[]) {
     if (!response.ok) throw new Error("history sync failed");
   }
 }
+/**
+ * 履歴の見出し。24文字で切ると多くの相談が途中で切れて内容を判別できないため、
+ * サーバー側の上限（80文字）に収まる範囲で長めに残し、切った場合だけ「…」を付ける。
+ */
+function sessionTitleFrom(text: string | undefined) {
+  const source = text?.replace(/\s+/g, " ").trim();
+  if (!source) return "新しい美容相談";
+  return source.length > 48 ? `${source.slice(0, 48)}…` : source;
+}
+
 function initialMessageFor(specialistId: SpecialistId): Message {
   const specialist = specialists.find((item) => item.id === specialistId) ?? specialists[0];
   return { id: Date.now(), role: "assistant", text: specialist.greeting, time: "いま" };
@@ -485,7 +497,7 @@ function careHint(specialistId: SpecialistId, condition?: ConditionEntry | null)
   return "大きく変えず、今日の使い心地を覚えておくと、次回の相談で調整しやすくなります。";
 }
 
-export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriAppProps) {
+export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvailable = true }: ChigiriAppProps) {
   const [splashVisible, setSplashVisible] = useState(true);
   const [stage, setStage] = useState<Stage>("concern");
   const [input, setInput] = useState("");
@@ -536,6 +548,26 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriA
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSplashVisible(false), 1100);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  // ログインに失敗したときは、コールバックが `?login=` を付けて戻してくる。
+  // 何も出さないと「押しても何も起きない」ように見えるため、理由を短く伝える。
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("login");
+    if (!result) return;
+    const messages: Record<string, string> = {
+      cancelled: "Googleログインをキャンセルしました。",
+      expired: "ログインの有効期限が切れました。もう一度お試しください。",
+      failed: "Googleログインを完了できませんでした。時間をおいてもう一度お試しください。",
+      unverified: "メールアドレスの確認が済んでいないGoogleアカウントではログインできません。",
+      unavailable: "現在この環境ではGoogleログインを利用できません。",
+    };
+    const timer = window.setTimeout(() => setServiceNotice(messages[result] ?? "ログインを完了できませんでした。"), 0);
+    params.delete("login");
+    const query = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -664,7 +696,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriA
     const firstUserMessage = messages.find((message) => message.role === "user")?.text;
     const current: ChatSession = {
       id: activeSessionId,
-      title: firstUserMessage?.slice(0, 24) || "新しい美容相談",
+      title: sessionTitleFrom(firstUserMessage),
       updatedAt: new Date().toISOString(),
       messages,
       stage,
@@ -1051,7 +1083,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriA
     const firstUserMessage = messages.find((message) => message.role === "user")?.text;
     const currentSnapshot: ChatSession = {
       id: activeSessionId,
-      title: firstUserMessage?.slice(0, 24) || "新しい美容相談",
+      title: sessionTitleFrom(firstUserMessage),
       updatedAt: new Date().toISOString(),
       messages,
       stage,
@@ -1208,7 +1240,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriA
                 >
                   <button type="button" className="history-item" onClick={() => openSession(session)}>
                     <span className="history-title"><b>{session.title}</b><time>{sessionTime(session.updatedAt)}</time></span>
-                    <span className="history-preview">{lastMessage.replace(/\n/g, " ").slice(0, 42)}</span>
+                    <span className="history-preview">{lastMessage.replace(/\s+/g, " ").trim().slice(0, 96)}</span>
                   </button>
                   <button type="button" className="history-delete" onClick={() => void deleteSession(session)} disabled={deletingSessionId === session.id} aria-label={`${session.title}を削除`} title="この相談ログを削除">{deletingSessionId === session.id ? "…" : "×"}</button>
                 </div>
@@ -1229,7 +1261,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriA
               <p className={`history-retention ${historySyncState === "error" ? "error" : ""}`}>
                 {historySyncState === "loading" ? "相談履歴を読み込んでいます" : historySyncState === "saving" ? "相談内容を保存中" : historySyncState === "error" ? "この端末には保持しています。再同期してください" : viewer ? "相談内容はいつでも見返せます（アカウント保存）" : "この端末で相談内容を見返せます"}
               </p>
-              {!viewer ? <a className="history-signin" href={signInPath}>ログインして端末をまたいで履歴を残す</a> : null}
+              {!viewer && signInAvailable ? <a className="history-signin" href={signInPath}>ログインして端末をまたいで履歴を残す</a> : null}
               {historySyncState === "error" ? <button type="button" className="history-more" onClick={() => void retryHistorySync()}>相談履歴を再同期</button> : null}
             </>
           )}
@@ -1249,15 +1281,17 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriA
             <button className="utility-button plan-button" onClick={() => setPlanOpen(true)}>今日のプラン</button>
             <button className="utility-button condition-button" onClick={() => setConditionOpen(true)}>今日の調子</button>
             <button className="utility-button shelf-button" onClick={() => setShelfOpen(true)}>マイアイテム{selectedIds.length ? ` ${selectedIds.length}` : ""}</button>
-            <a
-              className={`account-button ${viewer ? "signed-in" : ""}`}
-              href={viewer ? signOutPath : signInPath}
-              aria-label={viewer ? `${viewer.displayName}としてログイン中。ログアウトする` : "ログインする"}
-              title={viewer ? `${viewer.displayName}としてログイン中` : "ログインして履歴を保存"}
-            >
-              <span className="account-avatar" aria-hidden="true">{viewer ? viewer.displayName.slice(0, 1).toLocaleUpperCase("ja-JP") : "↗"}</span>
-              <span className="account-copy"><b>{viewer ? viewer.displayName : "ログイン"}</b><small>{viewer ? "アカウント保存" : "履歴を保存"}</small></span>
-            </a>
+            {viewer || signInAvailable ? (
+              <a
+                className={`account-button ${viewer ? "signed-in" : ""}`}
+                href={viewer ? signOutPath : signInPath}
+                aria-label={viewer ? `${viewer.displayName}としてログイン中。ログアウトする` : "Googleアカウントでログインする"}
+                title={viewer ? `${viewer.displayName}としてログイン中` : "Googleアカウントでログインして履歴を保存"}
+              >
+                <span className="account-avatar" aria-hidden="true">{viewer ? viewer.displayName.slice(0, 1).toLocaleUpperCase("ja-JP") : "G"}</span>
+                <span className="account-copy"><b>{viewer ? viewer.displayName : "Googleでログイン"}</b><small>{viewer ? "アカウント保存" : "履歴を保存"}</small></span>
+              </a>
+            ) : null}
           </div>
         </header>
 

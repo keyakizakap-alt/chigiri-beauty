@@ -37,11 +37,31 @@ test("opens each specialist on a fresh chat while keeping history available", ()
 });
 
 test("consultation history remains scrollable without being clipped by the rail footer", () => {
-  assert.match(styles, /\.rail \{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*overflow: hidden;/);
-  assert.match(styles, /\.history-panel \{[^}]*min-height: 0;[^}]*flex: 1;/);
-  assert.match(styles, /\.history-list \{[^}]*min-height: 0;[^}]*flex: 1;[^}]*overflow-y: auto;/);
+  // 画面が低いときはレール自体をスクロールさせる。overflow: hidden のままだと
+  // 履歴の下端・再読み込みボタン・注意書きが見切れる。
+  assert.match(styles, /\.rail \{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*overflow-y: auto;/);
+  assert.doesNotMatch(styles, /\.rail \{[^}]*overflow: hidden;/);
+  assert.match(styles, /\.history-panel \{[^}]*min-height: 0;[^}]*flex: 1 1 auto;/);
+  assert.match(styles, /\.history-list \{[^}]*min-height: 168px;[^}]*flex: 1 1 auto;[^}]*overflow-y: auto;/);
   assert.match(styles, /\.rail-bottom \{[^}]*flex: none;[^}]*margin-top: 12px;/);
   assert.doesNotMatch(styles, /\.history-list \{[^}]*max-height: calc\(100dvh - 560px\)/);
+});
+
+test("history entries show enough of the consultation to be recognizable", () => {
+  // 24文字で切ると多くの相談が見出しの途中で切れ、1行省略のプレビューでは
+  // 内容がほとんど読めない。
+  assert.doesNotMatch(component, /slice\(0, 24\) \|\| "新しい美容相談"/);
+  assert.match(component, /function sessionTitleFrom/);
+  assert.match(styles, /\.history-preview \{[^}]*-webkit-line-clamp: 2;/);
+  assert.doesNotMatch(styles, /\.history-preview \{[^}]*white-space: nowrap;/);
+});
+
+test("consultation history pages by position so concurrent saves cannot skip rows", () => {
+  // 相談中は現在のセッションが更新され続けるため、OFFSET方式だと未取得の行が
+  // ページの外へずれて履歴が歯抜けになる。
+  assert.match(consultationApi, /function decodeCursor/);
+  assert.match(consultationApi, /orderBy\(desc\(chatSessions\.updatedAt\), desc\(chatSessions\.id\)\)/);
+  assert.doesNotMatch(consultationApi, /\.offset\(/);
 });
 
 test("shows a short branded splash screen on launch", () => {
@@ -168,6 +188,36 @@ test("owned-item declarations are not recorded as answers to the pending questio
   assert.ok(!declared.facts.some((fact) => fact.includes("極潤")));
   // 通常の回答はこれまでどおり記録する。
   assert.equal(conversationContext.deriveConversationContext("skin", "洗顔後です", asked, {}).lastAnsweredKey, "timing");
+});
+
+test("relies on generation for ordinary messages instead of template replies", () => {
+  // 50文字以下というだけで定型応答へ落としていたため、日本語の相談ではほとんどの
+  // 発言が生成を通らず、質問に答えない・同じ型の相づちが続く返答になっていた。
+  assert.doesNotMatch(router, /input\.trim\(\)\.length <= 50/);
+  assert.match(router, /trimmedInput\.length <= 24/);
+  assert.match(router, /!\/\[？\?\]\/\.test\(trimmedInput\)/);
+  assert.match(router, /if \(!apiKey\) \{/);
+});
+
+test("proposal intent does not stick to the whole conversation", () => {
+  // 会話のどこかで一度「おすすめ」と言うと以降ずっと提案モードになり、
+  // 別の質問にも商品提案が返ってしまう。
+  assert.match(chatEngine, /userMessages\.slice\(-2\)/);
+  assert.match(chatEngine, /proposalPattern\.test\(recentUserText\)/);
+  assert.doesNotMatch(chatEngine, /const proposalRequested = proposalPattern\.test\(conversation\)/);
+});
+
+test("fillers and user questions are not echoed back as confirmed answers", () => {
+  const askedTiming = [{ role: "assistant", text: "どんなときにそうなりますか？" }];
+  assert.equal(conversationContext.reflectSpecialistConcern("skin", "はい", "timing"), "");
+  assert.equal(conversationContext.reflectSpecialistConcern("skin", "分からないです", "timing"), "");
+  assert.equal(conversationContext.reflectSpecialistConcern("body", "どれがいいですか？", "preference"), "");
+  // 利用者からの質問は、直前の質問への回答として記録しない。
+  const asking = conversationContext.deriveConversationContext("skin", "夜も塗ったほうがいいですか？", askedTiming);
+  assert.equal(asking.lastAnsweredKey, "");
+  assert.doesNotMatch(asking.facts.join(" "), /塗ったほうが/);
+  // 通常の回答はこれまでどおり復唱・記録する。
+  assert.equal(conversationContext.reflectSpecialistConcern("skin", "洗顔後です", "timing"), "「洗顔後です」のときに気になるんですね。");
 });
 
 test("budget parsing treats only a standalone zero as no purchase", () => {

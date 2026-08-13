@@ -75,7 +75,11 @@ button { cursor: pointer; }
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  /* 画面が低いときは中身を切り落とさず、レール自体をスクロールさせる。
+     overflow: hidden のままだと履歴の下端と注意書きが見切れる。 */
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 28px 22px;
   border-right: 1px solid rgba(105,118,111,.18);
   background: rgba(255,253,248,.72);
@@ -116,14 +120,17 @@ button { cursor: pointer; }
 .specialist-option b, .specialist-option small { display: block; min-width: 0; }
 .specialist-option b { font-size: 12px; line-height: 1.25; }
 .specialist-option small { margin-top: 2px; overflow: hidden; color: #718078; font-size: 10px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
-.history-panel { min-height: 0; margin-top: 26px; display: flex; flex: 1; flex-direction: column; }
+.brand, .rail-card { flex: none; }
+.history-panel { min-height: 0; margin-top: 26px; display: flex; flex: 1 1 auto; flex-direction: column; }
 .history-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .history-head h3 { margin: 4px 0 0; font-size: 15px; }
 .history-head button {
   width: 32px; height: 32px; border: 1px solid #ccd7d0; border-radius: 11px;
   color: #355d4b; background: rgba(255,255,255,.72); font-size: 18px; line-height: 1;
 }
-.history-list { min-height: 0; margin-top: 12px; padding: 0 3px 6px 0; display: grid; align-content: start; flex: 1; gap: 7px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-width: thin; }
+/* 履歴は最低でも数件分の高さを確保する。flex の圧縮に任せると、
+   画面が低いときに一覧がつぶれて1件も読めなくなる。 */
+.history-list { min-height: 168px; margin-top: 12px; padding: 0 3px 6px 0; display: grid; align-content: start; flex: 1 1 auto; gap: 7px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-width: thin; }
 .history-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: center; border: 1px solid transparent; border-radius: 14px; transition: .18s ease; }
 .history-row:hover { background: rgba(255,255,255,.58); }
 .history-row.active { border-color: #cedbd2; background: rgba(255,255,255,.78); box-shadow: 0 7px 20px rgba(51,79,65,.06); }
@@ -138,7 +145,8 @@ button { cursor: pointer; }
 .history-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .history-title b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .history-title time { flex: none; color: #8a978f; font-size: 9px; }
-.history-preview { display: block; margin-top: 4px; overflow: hidden; color: #7b8981; font-size: 9px; line-height: 1.45; white-space: nowrap; text-overflow: ellipsis; }
+/* 1行の省略だと相談内容がほとんど読めない。2行まで折り返してから省略する。 */
+.history-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; margin-top: 4px; overflow: hidden; color: #7b8981; font-size: 9px; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
 .history-empty { margin: 0; padding: 14px 2px; color: #849188; font-size: 10px; line-height: 1.65; }
 .history-more { width: 100%; padding: 9px; border: 1px solid #d4ded7; border-radius: 11px; color: #416451; background: rgba(255,255,255,.62); font-size: 9px; }
 .history-retention { margin: 9px 2px 0; color: #718078; font-size: 9px; line-height: 1.5; }
@@ -453,7 +461,7 @@ button { cursor: pointer; }
   .history-backdrop.visible { opacity: 1; pointer-events: auto; }
   .specialist-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .specialist-option { padding: 8px 7px; }
-  .history-list { min-height: 72px; }
+  .history-list { min-height: 132px; }
   .history-delete { opacity: 1; }
   .topbar { height: 64px; padding: 0 13px; }
   .topbar-left { gap: 10px; }
