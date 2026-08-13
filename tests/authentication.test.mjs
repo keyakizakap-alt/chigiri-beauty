@@ -11,10 +11,12 @@ const owner = await readFile(new URL("../server/request-owner.ts", import.meta.u
 const db = await readFile(new URL("../db/index.ts", import.meta.url), "utf8");
 
 test("offers Google account sign-in without replacing the existing app route", () => {
-  assert.match(page, /await auth\(\)/);
+  assert.match(page, /await getAuthSession\(\)/);
   assert.match(page, /<ChigiriApp/);
   assert.match(page, /dynamic = "force-dynamic"/);
   assert.match(auth, /Google/);
+  assert.match(auth, /authConfigured/);
+  assert.match(auth, /if \(!authConfigured\) return null/);
   assert.match(auth, /signIn: "\/login"/);
   assert.match(login, /Googleで続ける/);
   assert.match(login, /AUTH_GOOGLE_ID/);
@@ -23,9 +25,9 @@ test("offers Google account sign-in without replacing the existing app route", (
 });
 
 test("migrates the current anonymous owner's records only after trusted authentication", () => {
-  assert.match(migration, /await auth\(\)/);
+  assert.match(migration, /await getAuthSession\(\)/);
   assert.match(migration, /session\?\.user\?\.email/);
-  assert.match(owner, /await auth\(\)/);
+  assert.match(owner, /await getAuthSession\(\)/);
   assert.doesNotMatch(owner, /oai-authenticated-user-email/);
   assert.match(migration, /migrateOwnerData\(guestKey, userKey\)/);
   assert.match(db, /UPDATE OR IGNORE/);

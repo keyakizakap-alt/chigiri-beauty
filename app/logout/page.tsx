@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
+import { getAuthSession } from "@/auth";
 import { signOutToHome } from "@/app/auth-actions";
 
 export const dynamic = "force-dynamic";
 
 export default async function LogoutPage() {
-  const session = await auth();
+  const session = await getAuthSession();
   if (!session?.user?.email) redirect("/login");
 
   return (

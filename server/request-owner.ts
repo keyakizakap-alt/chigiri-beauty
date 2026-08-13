@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { getAuthSession } from "@/auth";
 
 const ownerCookie = "chigiri_owner";
 
@@ -17,7 +17,7 @@ async function sha256(value: string) {
 }
 
 export async function requestOwner(request: Request) {
-  const session = await auth();
+  const session = await getAuthSession();
   const email = session?.user?.email?.trim().toLowerCase();
   if (email) return { key: `user:${await sha256(email)}`, setCookie: null as string | null };
 

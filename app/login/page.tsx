@@ -1,15 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
+import { authConfigured, getAuthSession } from "@/auth";
 import { signInWithGoogle } from "@/app/auth-actions";
 
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage() {
-  const session = await auth();
+  const session = await getAuthSession();
   if (session?.user?.email) redirect("/");
-
-  const googleReady = Boolean(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET && process.env.AUTH_SECRET);
 
   return (
     <main className="auth-page">
@@ -21,7 +19,7 @@ export default async function LoginPage() {
         <p className="eyebrow">YOUR BEAUTY, REMEMBERED</p>
         <h1 id="login-title">相談の続きを、<br />いつでもここから。</h1>
         <p className="auth-lead">Googleアカウントでログインすると、5人の美容コンシェルジュとの相談履歴を端末をまたいで見返せます。</p>
-        {googleReady ? (
+        {authConfigured ? (
           <form action={signInWithGoogle}>
             <button className="google-login" type="submit">
               <span aria-hidden="true">G</span>
