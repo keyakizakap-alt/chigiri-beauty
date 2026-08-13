@@ -87,6 +87,17 @@ export function isDirectiveRequest(input) {
     || /(使い方|手順|方法).{0,12}(お願い|教えて|知りたい|見たい)/.test(source);
 }
 
+/**
+ * 手持ちアイテムの申告は、直前の質問への回答ではない。ピッカーから送られる
+ * 「手持ちは「A」「B」です。」を、タイミングや好みの答えとして記録してしまうと、
+ * 以降の提案が商品名を条件として扱ってしまう。
+ */
+export function isOwnedItemsDeclaration(input) {
+  const source = normalize(input).trim();
+  return /^手持ちは.+です[。\s]*$/.test(source)
+    || /^手持ちはまだ登録していません[。\s]*$/.test(source);
+}
+
 function addFact(facts, source, pattern, text) {
   if (pattern.test(source) && !facts.includes(text)) facts.push(text);
 }
@@ -404,7 +415,9 @@ export function deriveConversationContext(specialist, input, history = [], memor
     ...(Array.isArray(memory.knownKeys) ? memory.knownKeys.filter((key) => allowedKeys.has(key)).slice(0, 12) : []),
     ...matched.map((item) => item.key),
   ]);
-  const lastAnsweredKey = isDirectiveRequest(input) ? "" : latestAssistantQuestionKey(specialist, history);
+  const lastAnsweredKey = isDirectiveRequest(input) || isOwnedItemsDeclaration(input)
+    ? ""
+    : latestAssistantQuestionKey(specialist, history);
   const answerFact = inferredAnswerFact(specialist, lastAnsweredKey, input);
   if (lastAnsweredKey && input.trim()) knownKeys.add(lastAnsweredKey);
   const askedKeys = new Set([

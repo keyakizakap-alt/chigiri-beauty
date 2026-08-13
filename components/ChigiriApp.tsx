@@ -829,7 +829,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriA
           images: imagesToSend.map((image) => image.url),
           ownedProductIds: selectedIds,
           conditions: conversationConditions,
-          history: messages.map(({ role, text }) => ({ role, text })).slice(-20),
+          history: messages.map(({ role, text }) => ({ role, text })).slice(-60),
           memory: {
             knownKeys: knownContextKeys,
             askedKeys: askedContextKeys,
@@ -1001,8 +1001,9 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriA
 
   function finishInventory() {
     if (!selectedIds.length || busy) return;
-    const summary = selectedProducts.map((product) => `${product.brand} ${product.name}`).join("、");
-    void send(summary);
+    // 「手持ちは〜です。」の形にして、直前の質問への回答として記録されないようにする。
+    const summary = selectedProducts.map((product) => `「${product.brand} ${product.name}」`).join("");
+    void send(`手持ちは${summary}です。`);
   }
 
   function toggleProduct(id: string) {

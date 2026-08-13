@@ -145,12 +145,32 @@ test("the usage-or-products choice always offers its three replies", () => {
   );
 });
 
+test("owned-item declarations are not recorded as answers to the pending question", () => {
+  // ピッカーから送られる手持ちの一覧を、直前の質問（タイミングや好み）への
+  // 回答として保存すると、以降の提案が商品名を条件として扱ってしまう。
+  const asked = [{ role: "assistant", text: "乾燥が気になるんですね。\n\nどんなときにそうなりますか？" }];
+  const declared = conversationContext.deriveConversationContext(
+    "skin",
+    "手持ちは「肌ラボ 極潤 ヒアルロン液」「Curél 潤浸保湿 フェイスクリーム」です。",
+    asked,
+    {},
+  );
+  assert.equal(declared.lastAnsweredKey, "");
+  assert.ok(!declared.facts.some((fact) => fact.includes("極潤")));
+  // 通常の回答はこれまでどおり記録する。
+  assert.equal(conversationContext.deriveConversationContext("skin", "洗顔後です", asked, {}).lastAnsweredKey, "timing");
+});
+
 test("budget parsing treats only a standalone zero as no purchase", () => {
   assert.equal(budget.budgetFromText("3000円くらいで", 3000), 3000);
   assert.equal(budget.budgetFromText("10000円まで出せます", 3000), 10000);
   assert.equal(budget.budgetFromText("0円で考えたい", 3000), 0);
   assert.equal(budget.budgetFromText("買い足しはなしで", 3000), 0);
   assert.equal(budget.budgetFromText("特に決めていません", 3000), 3000);
+  // 「円」が付かない言い方も拾う。年号や年代は拾わない。
+  assert.equal(budget.budgetFromText("5000まで", 3000), 5000);
+  assert.equal(budget.budgetFromText("予算8000", 3000), 8000);
+  assert.equal(budget.budgetFromText("2026年の新作が気になる", 3000), 3000);
 });
 
 test("loads the whole history in one pass and reports load failures honestly", () => {
@@ -254,7 +274,8 @@ test("uses guided intake to reduce LLM calls and keeps prompts bounded", () => {
   assert.match(router, /assessment\.phase === "listen"/);
   assert.match(router, /"guided-intake"/);
   assert.match(router, /history\.slice\(-12\)/);
-  assert.match(apiRoute, /\.slice\(-20\)/);
+  assert.match(apiRoute, /\.slice\(-60\)/);
+  assert.match(router, /history\.slice\(-12\)/);
   assert.match(component, /askedContextKeys/);
   assert.match(router, /max_tokens: 320/);
   assert.match(component, /基本のケア案内でお返ししています/);
