@@ -1,22 +1,30 @@
-import { drizzle } from "drizzle-orm/d1";
+import { createClient } from "@libsql/client";
+import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/libsql";
 import * as schema from "./schema";
 
+function createDb() {
+  const client = createClient({
+    url: databaseUrl(),
+    authToken: process.env.TURSO_AUTH_TOKEN?.trim() || undefined,
+  });
+  return drizzle(client, { schema });
+}
+
+type AppDb = ReturnType<typeof createDb>;
+
+let database: AppDb | null = null;
 let appStorageReady: Promise<void> | null = null;
 
-async function d1Binding() {
-  const { env } = await import("cloudflare:workers");
-  if (!env.DB) {
-    throw new Error(
-      "Cloudflare D1 binding `DB` is unavailable. Set the `d1` field in .openai/hosting.json to `DB` or let your control plane inject the real binding values before using the database."
-    );
-  }
-  return env.DB;
+function databaseUrl() {
+  const url = process.env.TURSO_DATABASE_URL?.trim();
+  if (!url) throw new Error("TURSO_DATABASE_URL is not configured");
+  return url;
 }
 
 export async function getDb() {
-  // Delay the Workers-only module until a request actually needs D1. This keeps
-  // Node-based artifact verification from evaluating the `cloudflare:` scheme.
-  return drizzle(await d1Binding(), { schema });
+  if (!database) database = createDb();
+  return database;
 }
 
 /**
@@ -27,9 +35,9 @@ export async function getDb() {
 export async function ensureAppStorage() {
   if (!appStorageReady) {
     appStorageReady = (async () => {
-      const d1 = await d1Binding();
-      await d1.batch([
-        d1.prepare(`CREATE TABLE IF NOT EXISTS chat_sessions (
+      const db = await getDb();
+      const statements = [
+        `CREATE TABLE IF NOT EXISTS chat_sessions (
           owner_key text NOT NULL,
           id text NOT NULL,
           specialist_id text NOT NULL,
@@ -38,9 +46,9 @@ export async function ensureAppStorage() {
           created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
           updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
           PRIMARY KEY(owner_key, id)
-        )`),
-        d1.prepare("CREATE INDEX IF NOT EXISTS chat_sessions_owner_specialist_updated_idx ON chat_sessions (owner_key, specialist_id, updated_at)"),
-        d1.prepare(`CREATE TABLE IF NOT EXISTS beauty_check_ins (
+        )`,
+        "CREATE INDEX IF NOT EXISTS chat_sessions_owner_specialist_updated_idx ON chat_sessions (owner_key, specialist_id, updated_at)",
+        `CREATE TABLE IF NOT EXISTS beauty_check_ins (
           owner_key text NOT NULL,
           id text NOT NULL,
           specialist_id text NOT NULL,
@@ -48,9 +56,9 @@ export async function ensureAppStorage() {
           recorded_at text NOT NULL,
           created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
           PRIMARY KEY(owner_key, id)
-        )`),
-        d1.prepare("CREATE INDEX IF NOT EXISTS beauty_check_ins_owner_specialist_recorded_idx ON beauty_check_ins (owner_key, specialist_id, recorded_at)"),
-        d1.prepare(`CREATE TABLE IF NOT EXISTS uploaded_assets (
+        )`,
+        "CREATE INDEX IF NOT EXISTS beauty_check_ins_owner_specialist_recorded_idx ON beauty_check_ins (owner_key, specialist_id, recorded_at)",
+        `CREATE TABLE IF NOT EXISTS uploaded_assets (
           owner_key text NOT NULL,
           id text NOT NULL,
           object_key text NOT NULL,
@@ -59,19 +67,33 @@ export async function ensureAppStorage() {
           byte_size integer NOT NULL,
           created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
           PRIMARY KEY(owner_key, id)
-        )`),
-        d1.prepare("CREATE INDEX IF NOT EXISTS uploaded_assets_owner_created_idx ON uploaded_assets (owner_key, created_at)"),
-        d1.prepare(`CREATE TABLE IF NOT EXISTS deleted_chat_sessions (
+        )`,
+        "CREATE INDEX IF NOT EXISTS uploaded_assets_owner_created_idx ON uploaded_assets (owner_key, created_at)",
+        `CREATE TABLE IF NOT EXISTS deleted_chat_sessions (
           owner_key text NOT NULL,
           id text NOT NULL,
           deleted_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
           PRIMARY KEY(owner_key, id)
-        )`),
-      ]);
+        )`,
+      ];
+      for (const statement of statements) await db.run(statement);
     })().catch((error) => {
       appStorageReady = null;
       throw error;
     });
   }
   await appStorageReady;
+}
+
+export async function migrateOwnerData(guestKey: string, userKey: string) {
+  await ensureAppStorage();
+  const db = await getDb();
+  const tables = ["chat_sessions", "deleted_chat_sessions", "beauty_check_ins", "uploaded_assets"];
+  await db.transaction(async (tx) => {
+    for (const table of tables) {
+      const tableName = sql.raw(table);
+      await tx.run(sql`UPDATE OR IGNORE ${tableName} SET owner_key = ${userKey} WHERE owner_key = ${guestKey}`);
+      await tx.run(sql`DELETE FROM ${tableName} WHERE owner_key = ${guestKey}`);
+    }
+  });
 }

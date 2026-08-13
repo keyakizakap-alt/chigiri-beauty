@@ -1,4 +1,4 @@
-import { ensureAppStorage } from "@/db";
+import { migrateOwnerData } from "@/db";
 
 const ownerCookie = "chigiri_owner";
 const guestIdPattern = /^[0-9a-f-]{36}$/i;
@@ -38,18 +38,7 @@ export async function POST(request: Request) {
   const userKey = `user:${await sha256(email)}`;
 
   try {
-    await ensureAppStorage();
-    const { env } = await import("cloudflare:workers");
-    const statements = [
-      "chat_sessions",
-      "deleted_chat_sessions",
-      "beauty_check_ins",
-      "uploaded_assets",
-    ].flatMap((table) => [
-      env.DB.prepare(`UPDATE OR IGNORE ${table} SET owner_key = ? WHERE owner_key = ?`).bind(userKey, guestKey),
-      env.DB.prepare(`DELETE FROM ${table} WHERE owner_key = ?`).bind(guestKey),
-    ]);
-    await env.DB.batch(statements);
+    await migrateOwnerData(guestKey, userKey);
     return response({ migrated: true }, 200, true);
   } catch {
     return response({ error: "端末内の相談データをアカウントへ移行できませんでした。" }, 503);

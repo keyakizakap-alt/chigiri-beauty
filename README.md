@@ -6,9 +6,8 @@
 
 商品詳細では、公式情報をもとにした注目成分の役割、合わない可能性を切り分ける観察点、手持ちとの違い、変化を見る時期、楽天市場と@cosmeの確認導線を表示します。口コミ本文は転載しません。
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+Next.js App RouterをVercelへ直接デプロイできる構成です。相談ログはTurso、
+利用者が送信した非公開画像はVercel Blobへ保存します。
 
 ## Prerequisites
 
@@ -23,8 +22,11 @@ Drizzle support.
 | `ORCAROUTER_MODEL` | OrcaRouterのモデル指定 | 任意。既定値は `orcarouter/auto` |
 | `RAKUTEN_APPLICATION_ID` | 楽天市場の商品評価取得 | 評価点・件数の自動表示に必要 |
 | `RAKUTEN_ACCESS_KEY` | 楽天市場APIのアクセスキー | 評価点・件数の自動表示に必要 |
+| `TURSO_DATABASE_URL` | 相談履歴・コンディション・画像台帳の保存先 | 必須。Vercel MarketplaceのTurso連携で設定 |
+| `TURSO_AUTH_TOKEN` | Tursoへの接続トークン | 必須。Vercel MarketplaceのTurso連携で設定 |
+| `BLOB_READ_WRITE_TOKEN` | 非公開画像を保存するVercel Blobトークン | 必須。Blobストア接続時に設定。Vercel上ではOIDC利用も可 |
 
-秘密値はSitesの本番環境変数で管理し、リポジトリやログへ保存しません。楽天の認証情報がない場合も、楽天市場・@cosmeの検索導線は利用できます。
+秘密値はVercelのEnvironment Variablesで管理し、リポジトリやログへ保存しません。楽天の認証情報がない場合も、楽天市場・@cosmeの検索導線は利用できます。
 
 ローカルでは`.env.example`を`.env.local`へコピーし、必要な値だけ設定してください。実値を含む`.env*`はGit管理対象外です。
 
@@ -32,8 +34,8 @@ Drizzle support.
 
 - 会話オーケストレーション: ルールベースの安全判定＋構造化会話メモリ
 - 自然言語生成: OrcaRouter（未設定・障害時は安全なローカル応答へフォールバック）
-- 永続化: Cloudflare D1（相談履歴・手持ち品・コンディション）
-- 画像: Cloudflare R2。LLMへ渡す画像は現在の所有者がアップロードしたものに限定
+- 永続化: Turso（相談履歴・手持ち品・コンディション）
+- 画像: Vercel Blobのprivateストア。LLMへ渡す画像は現在の所有者がアップロードしたものに限定
 - 商品根拠: リポジトリ内の公式確認済み商品データ。候補外の商品情報を生成しない
 
 詳しい設計と審査基準への対応は[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)と[`docs/JUDGING.md`](docs/JUDGING.md)を参照してください。
@@ -50,7 +52,13 @@ npm audit --omit=dev --audit-level=high
 
 Pull Requestでは同じ検証をGitHub Actionsで実行します。
 
-## Sites Lifecycle
+## Vercel deployment
+
+GitHubリポジトリをVercelへImportし、Framework Presetを`Next.js`、Root Directoryを`.`に設定してください。その後、MarketplaceでTursoを接続し、StorageからprivateのVercel Blobストアを接続します。OrcaRouter等のキーはEnvironment Variablesへ追加して再デプロイします。
+
+詳細な初回設定と確認手順は[`docs/VERCEL_DEPLOYMENT.md`](docs/VERCEL_DEPLOYMENT.md)を参照してください。
+
+## Optional Sites lifecycle
 
 The Sites lifecycle CLI runs the locked dependency install before returning this checkout. Edit the source under `app/`, then checkpoint when a coherent milestone is ready to inspect or share. The remote Sites builder runs `npm run build` against the pushed commit. Do not repeat install or build as a normal pre-checkpoint step.
 
@@ -132,10 +140,13 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 ## Diagnostic Commands
 
 - `npm run install:ci`: perform the one bounded lockfile install
-- `npm run dev`: start the Vite/Vinext development server
-- `npm run build`: build and validate the deployable Sites artifact
-- `npm run start`: start the built Vinext application
-- `npm test`: build, validate, and verify the rendered development-preview metadata
+- `npm run dev`: start the Next.js development server
+- `npm run build`: create the Vercel-compatible Next.js production build
+- `npm run start`: start the built Next.js application
+- `npm test`: run the behavior and deployment configuration tests
+- `npm run dev:sites`: start the optional Vite/Vinext development server
+- `npm run build:sites`: build and validate the optional Sites artifact
+- `npm run start:sites`: start the optional Vinext build
 - `npm run validate:artifact`: recheck an existing artifact's manifest and ESM `default.fetch` export
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 

@@ -13,6 +13,7 @@ const checkInApi = await readFile(new URL("../app/api/check-ins/route.ts", impor
 const uploadApi = await readFile(new URL("../app/api/uploads/route.ts", import.meta.url), "utf8");
 const schema = await readFile(new URL("../db/schema.ts", import.meta.url), "utf8");
 const dbSource = await readFile(new URL("../db/index.ts", import.meta.url), "utf8");
+const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const conversationContext = await import(new URL("../server/conversation-context.mjs", import.meta.url));
 const quickReplies = await import(new URL("../server/quick-replies.mjs", import.meta.url));
 const budget = await import(new URL("../server/budget.mjs", import.meta.url));
@@ -35,6 +36,14 @@ test("opens each specialist on a fresh chat while keeping history available", ()
   assert.doesNotMatch(component, /setMessages\(\(current\) => \[\.\.\.current, initialMessageFor\(nextId\)\]\)/);
 });
 
+test("consultation history remains scrollable without being clipped by the rail footer", () => {
+  assert.match(styles, /\.rail \{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*overflow: hidden;/);
+  assert.match(styles, /\.history-panel \{[^}]*min-height: 0;[^}]*flex: 1;/);
+  assert.match(styles, /\.history-list \{[^}]*min-height: 0;[^}]*flex: 1;[^}]*overflow-y: auto;/);
+  assert.match(styles, /\.rail-bottom \{[^}]*flex: none;[^}]*margin-top: 12px;/);
+  assert.doesNotMatch(styles, /\.history-list \{[^}]*max-height: calc\(100dvh - 560px\)/);
+});
+
 test("shows a short branded splash screen on launch", () => {
   assert.match(component, /app-splash/);
   assert.match(component, /setSplashVisible\(false\)/);
@@ -53,7 +62,7 @@ test("persists consultation logs without a client-side retention cap", () => {
   assert.match(component, /相談履歴を再同期/);
   assert.match(consultationApi, /ensureAppStorage/);
   assert.match(dbSource, /CREATE TABLE IF NOT EXISTS chat_sessions/);
-  assert.match(dbSource, /d1\.batch/);
+  assert.match(dbSource, /for \(const statement of statements\) await db\.run\(statement\)/);
 });
 
 test("lets the owner delete a selected log and its attached images", () => {
@@ -61,7 +70,7 @@ test("lets the owner delete a selected log and its attached images", () => {
   assert.match(component, /この操作は取り消せません/);
   assert.match(component, /method: "DELETE"/);
   assert.match(consultationApi, /deletedChatSessions/);
-  assert.match(consultationApi, /env\.BUCKET\.delete\(\[\.\.\.new Set\(references\.keys\)\]\)/);
+  assert.match(consultationApi, /deletePrivateImages\(\[\.\.\.new Set\(references\.keys\)\]\)/);
   assert.match(consultationApi, /eq\(chatSessions\.ownerKey, owner\.key\)/);
 });
 
@@ -182,7 +191,7 @@ test("loads the whole history in one pass and reports load failures honestly", (
   assert.match(consultationApi, /specialist !== null && !specialists\.has\(specialist\)/);
 });
 
-test("creates every table the routes need before touching D1", () => {
+test("creates every table the routes need before using Turso", () => {
   for (const table of ["chat_sessions", "beauty_check_ins", "uploaded_assets"]) {
     assert.match(dbSource, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`));
   }
