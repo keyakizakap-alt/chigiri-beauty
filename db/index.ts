@@ -26,7 +26,7 @@ export async function getDb() {
  * 台帳も同じ方法で揃える。`drizzle/` のマイグレーションと定義を一致させること。
  */
 export async function ensureAppStorage() {
-  if (!chatStorageReady) {
+  if (!appStorageReady) {
     appStorageReady = (async () => {
       const d1 = await d1Binding();
       await d1.batch([
