@@ -1,8 +1,7 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { ensureAppStorage, getDb } from "@/db";
-import { chatSessions, deletedChatSessions, uploadedAssets } from "@/db/schema";
-import { privateJson as json, requestOwner as ownerFor } from "@/server/request-owner";
-
+import { chatSessions } from "@/db/schema";
+import { privateJson, requestOwner } from "@/server/request-owner";
 const specialists = new Set(["skin", "hair", "body", "makeup", "nail"]);
 const sessionIdPattern = /^[a-zA-Z0-9-]{8,80}$/;
 const pageSize = 40;
@@ -30,14 +29,14 @@ function validateSession(value: unknown): StoredSession | null {
 }
 
 export async function GET(request: Request) {
-  const owner = await ownerFor(request);
+  const owner = await requestOwner(request);
   const url = new URL(request.url);
   const specialist = url.searchParams.get("specialist");
   // specialist は任意。省略時は全担当の相談ログをまとめて返す。担当ごとに
   // 5本のリクエストを投げると、そのうち1本が落ちただけで画面の履歴が
   // すべて空になってしまうため、既定は1回の取得で済ませる。
   if (specialist !== null && !specialists.has(specialist)) {
-    return json({ error: "担当コンシェルジュを確認できません。" }, 400, owner.setCookie);
+    return privateJson({ error: "担当コンシェルジュを確認できません。" }, 400, owner.setCookie);
   }
   const parsedCursor = Number(url.searchParams.get("cursor") ?? "0");
   const offset = Number.isSafeInteger(parsedCursor) && parsedCursor >= 0 ? parsedCursor : 0;
@@ -58,22 +57,38 @@ export async function GET(request: Request) {
     const sessions = rows.slice(0, pageSize).flatMap((row) => {
       try { return [JSON.parse(row.payloadJson)]; } catch { return []; }
     });
-    return json({ sessions, nextCursor: hasMore ? String(offset + pageSize) : null }, 200, owner.setCookie);
+    return privateJson({ sessions, nextCursor: hasMore ? String(offset + pageSize) : null }, 200, owner.setCookie);
   } catch {
-    return json({ error: "相談ログを読み込めませんでした。" }, 503, owner.setCookie);
+    return privateJson({ error: "相談ログを読み込めませんでした。" }, 503, owner.setCookie);
   }
 }
 
+function mergeMessages(previous: unknown[], incoming: unknown[]) {
+  const merged = new Map<string, unknown>();
+  for (const [index, message] of [...previous, ...incoming].entries()) {
+    const value = message && typeof message === "object" ? message as { id?: unknown; role?: unknown } : null;
+    const key = value && (typeof value.id === "number" || typeof value.id === "string")
+      ? `${String(value.role)}:${String(value.id)}`
+      : `legacy:${index}:${JSON.stringify(message)}`;
+    merged.set(key, message);
+  }
+  return [...merged.values()].sort((a, b) => {
+    const left = a && typeof a === "object" ? Number((a as { id?: unknown }).id) : Number.NaN;
+    const right = b && typeof b === "object" ? Number((b as { id?: unknown }).id) : Number.NaN;
+    return Number.isFinite(left) && Number.isFinite(right) ? left - right : 0;
+  });
+}
+
 export async function POST(request: Request) {
-  const owner = await ownerFor(request);
+  const owner = await requestOwner(request);
   let body: { sessions?: unknown[] };
-  try { body = await request.json(); } catch { return json({ error: "保存内容を確認できません。" }, 400, owner.setCookie); }
+  try { body = await request.json(); } catch { return privateJson({ error: "保存内容を確認できません。" }, 400, owner.setCookie); }
   if (!Array.isArray(body.sessions) || body.sessions.length < 1 || body.sessions.length > 50) {
-    return json({ error: "保存できる相談ログは1回につき50件までです。" }, 400, owner.setCookie);
+    return privateJson({ error: "保存できる相談ログは1回につき50件までです。" }, 400, owner.setCookie);
   }
   const sessions = body.sessions.map(validateSession);
   if (sessions.some((session) => !session)) {
-    return json({ error: "相談ログの形式を確認できません。" }, 400, owner.setCookie);
+    return privateJson({ error: "相談ログの形式を確認できません。" }, 400, owner.setCookie);
   }
 
   try {
@@ -81,88 +96,38 @@ export async function POST(request: Request) {
     const db = await getDb();
     let saved = 0;
     for (const session of sessions as StoredSession[]) {
-      const tombstone = await db.select({ id: deletedChatSessions.id })
-        .from(deletedChatSessions)
-        .where(and(eq(deletedChatSessions.ownerKey, owner.key), eq(deletedChatSessions.id, session.id)))
+      const existing = await db.select({ payloadJson: chatSessions.payloadJson })
+        .from(chatSessions)
+        .where(and(eq(chatSessions.ownerKey, owner.key), eq(chatSessions.id, session.id)))
         .limit(1);
-      if (tombstone.length) continue;
+      let storedSession = session;
+      if (existing[0]) {
+        try {
+          const previous = JSON.parse(existing[0].payloadJson) as StoredSession;
+          storedSession = { ...previous, ...session, messages: mergeMessages(previous.messages ?? [], session.messages) };
+        } catch { /* Replace unreadable legacy data with the validated current payload. */ }
+      }
       const updatedAt = new Date(session.updatedAt).toISOString();
       await db.insert(chatSessions).values({
         ownerKey: owner.key,
         id: session.id,
         specialistId: session.specialistId,
         title: session.title.trim(),
-        payloadJson: JSON.stringify(session),
+        payloadJson: JSON.stringify(storedSession),
         updatedAt,
       }).onConflictDoUpdate({
         target: [chatSessions.ownerKey, chatSessions.id],
         set: {
           specialistId: session.specialistId,
           title: session.title.trim(),
-          payloadJson: JSON.stringify(session),
+          payloadJson: JSON.stringify(storedSession),
           updatedAt,
         },
       });
       saved += 1;
     }
-    return json({ saved }, 200, owner.setCookie);
+    return privateJson({ saved }, 200, owner.setCookie);
   } catch {
-    return json({ error: "相談ログを保存できませんでした。" }, 503, owner.setCookie);
-  }
-}
-
-function imageReferences(payloadJson: string) {
-  try {
-    const payload = JSON.parse(payloadJson) as StoredSession;
-    const keys = new Set<string>();
-    const ids = new Set<string>();
-    for (const message of payload.messages ?? []) {
-      if (!message || typeof message !== "object") continue;
-      const images = (message as { images?: Array<{ url?: string }> }).images;
-      for (const image of images ?? []) {
-        if (!image.url?.startsWith("/api/uploads?")) continue;
-        const url = new URL(image.url, "https://app.local");
-        const key = url.searchParams.get("key");
-        const id = url.searchParams.get("id");
-        if (key?.startsWith("chat-images/")) keys.add(key);
-        if (id && /^[0-9a-f-]{36}$/i.test(id)) ids.add(id);
-      }
-    }
-    return { keys: [...keys], ids: [...ids] };
-  } catch { return { keys: [], ids: [] }; }
-}
-
-export async function DELETE(request: Request) {
-  const owner = await ownerFor(request);
-  const id = new URL(request.url).searchParams.get("id");
-  if (!id || !sessionIdPattern.test(id)) return json({ error: "削除する相談ログを確認できません。" }, 400, owner.setCookie);
-
-  try {
-    await ensureAppStorage();
-    const db = await getDb();
-    const existing = await db.select({ payloadJson: chatSessions.payloadJson })
-      .from(chatSessions)
-      .where(and(eq(chatSessions.ownerKey, owner.key), eq(chatSessions.id, id)))
-      .limit(1);
-    await db.insert(deletedChatSessions).values({ ownerKey: owner.key, id }).onConflictDoNothing();
-    await db.delete(chatSessions).where(and(eq(chatSessions.ownerKey, owner.key), eq(chatSessions.id, id)));
-
-    const references = existing[0] ? imageReferences(existing[0].payloadJson) : { keys: [], ids: [] };
-    if (references.ids.length) {
-      const assets = await db.select({ objectKey: uploadedAssets.objectKey })
-        .from(uploadedAssets)
-        .where(and(eq(uploadedAssets.ownerKey, owner.key), inArray(uploadedAssets.id, references.ids)));
-      references.keys.push(...assets.map((asset) => asset.objectKey));
-      await db.delete(uploadedAssets).where(and(eq(uploadedAssets.ownerKey, owner.key), inArray(uploadedAssets.id, references.ids)));
-    }
-    if (references.keys.length) {
-      try {
-        const { env } = await import("cloudflare:workers");
-        if (env.BUCKET) await env.BUCKET.delete([...new Set(references.keys)]);
-      } catch { /* The conversation is deleted even if an orphaned image needs later cleanup. */ }
-    }
-    return json({ deleted: true }, 200, owner.setCookie);
-  } catch {
-    return json({ error: "相談ログを削除できませんでした。" }, 503, owner.setCookie);
+    return privateJson({ error: "相談ログを保存できませんでした。" }, 503, owner.setCookie);
   }
 }

@@ -6,6 +6,14 @@ type ChatStage = "concern" | "skin" | "inventory" | "budget" | "complete";
 type SpecialistId = "skin" | "hair" | "body" | "makeup" | "nail";
 type ChatHistoryEntry = { role: "assistant" | "user"; text: string; images?: string[] };
 type ConversationMemory = { knownKeys?: string[]; askedKeys?: string[] };
+export type ReplyMode = "quick" | "balanced" | "deep";
+type CustomOwnedItem = { brand: string; name: string; category: string; note: string };
+
+const replyModeSettings: Record<ReplyMode, { reasoningEffort: "low" | "medium" | "high"; maxCompletionTokens: number; temperature: number }> = {
+  quick: { reasoningEffort: "low", maxCompletionTokens: 240, temperature: 0.7 },
+  balanced: { reasoningEffort: "medium", maxCompletionTokens: 380, temperature: 0.64 },
+  deep: { reasoningEffort: "high", maxCompletionTokens: 620, temperature: 0.56 },
+};
 
 const specialistInstructions: Record<SpecialistId, string> = {
   skin: "あなたはARCA。スキンケア、紫外線対策、手持ち品の組み合わせ、朝夜ルーティンまで扱います。肌質を断定せず、使用感と起きるタイミングから提案します。",
@@ -21,6 +29,8 @@ const systemPrompt = `あなたはCHIGIRI Beautyの独立した美容コンシ�
 
 返答前に、内部で「背景をもう少し聞く」「手持ちや習慣を整理する」「提案へ進む」の3案を比較し、今の会話を最も前へ進める1つの返し方を選んでください。比較過程や内部推論は出力しません。
 - 毎回、共感句＋言い換え＋質問という同じ型にしない。
+- カウンセラーのように、最新の言葉だけでなく会話の流れから「何に困っているか」「何を迷っているか」を受け取る。迷いが両方あるときは、一方に決めつけず両方を短く認める。
+- ユーザーが返答を訂正したり、会話の不自然さを指摘したときは、その内容をまず受け止め、言い訳せずに理解を修正する。
 - 直前2回のアシスタント発言と、冒頭表現・語尾・質問の形を重複させない。
 - ユーザーが具体的に聞いた場合は、まず答えてから必要なら質問する。
 - 最新の発言が「商品候補をお願い」「おすすめを教えて」「候補を見たい」などの依頼なら、好み・症状・仕上がりとして復唱しない。必要な条件がそろっていれば「分かりました。」と短く受けて、すぐ提案内容へ進む。条件が足りない場合も「分かりました。候補を絞るために、あと1点だけ確認します。」と受けてから質問する。この規則はスキンケア、ヘア、ボディ、メイク、ネイルの全担当で共通とする。
@@ -84,7 +94,7 @@ function reviewContext(evidence: ProductReviewEvidence[]) {
 }
 
 /**
- * 4つの返却経路（初回・APIキーなし・生成成功・障害時フォールバック）で
+ * 返却経路（安全確認・APIキーなし・生成成功・障害時フォールバック）で
  * 同じ形の応答を返す。実際に質問した項目は askedContextKeys へ足し、
  * 次のターンで同じことを聞き直さないようにする。
  */
@@ -95,6 +105,7 @@ function replyPayload(
   assessment: ConversationAssessment,
   products: VerifiedProduct[],
   reviews: ProductReviewEvidence[],
+  replyMode: ReplyMode,
 ) {
   const askedContextKeys = assessment.nextQuestionKey && text.includes(assessment.nextQuestion)
     ? [...new Set([...assessment.askedContextKeys, assessment.nextQuestionKey])]
@@ -109,6 +120,7 @@ function replyPayload(
     conversationFacts: assessment.factSummary,
     knownContextKeys: assessment.knownContextKeys,
     askedContextKeys,
+    replyMode,
   };
 }
 
@@ -121,7 +133,10 @@ export async function createChatReply(
   ownedProducts: VerifiedProduct[] = [],
   conditionSummary = "",
   memory: ConversationMemory = {},
+  replyMode: ReplyMode = "balanced",
+  customOwnedItems: CustomOwnedItem[] = [],
 ) {
+  const responseSettings = replyModeSettings[replyMode];
   const assessment = assessConversation(specialist, input, history, memory);
   const proposalRequestedThisTurn = isProposalRequestTurn(input, history);
   const recommendedProducts = assessment.phase === "propose"
@@ -139,8 +154,9 @@ export async function createChatReply(
     assessment,
     safeProducts,
     recommendationReviews,
+    replyMode,
   );
-  if (assessment.phase === "listen" || assessment.phase === "safety") return localReply("guided-intake");
+  if (assessment.phase === "safety") return localReply("guided-intake");
   if (!apiKey) return localReply("local-fallback");
 
   try {
@@ -152,10 +168,11 @@ export async function createChatReply(
       },
       body: JSON.stringify({
         model: process.env.ORCAROUTER_MODEL || "orcarouter/auto",
-        temperature: 0.68,
-        max_tokens: 320,
+        temperature: responseSettings.temperature,
+        reasoning_effort: responseSettings.reasoningEffort,
+        max_completion_tokens: responseSettings.maxCompletionTokens,
         messages: [
-          { role: "system", content: `${systemPrompt}\n${specialistInstructions[specialist]}\n現在の会話段階: ${assessment.phase}\n相談回数: ${assessment.userTurnCount}\n製品提案への同意: ${assessment.proposalRequested ? "あり" : "なし"}\n会話で確認済みの条件（ここにない内容は推測しない）: ${assessment.factSummary.join("・") || "まだ少ない"}\n未確認で提案に影響する次の一点: ${assessment.nextQuestion || "なし"}\n美容領域をまたいだ最近のコンディション: ${conditionSummary || "記録なし"}\n手持ちアイテム（最優先で活用）:\n${productContext(ownedProducts)}\n買い足し候補:\n${productContext(safeProducts)}\n買い足し候補の口コミエビデンス（この範囲だけを引用）:\n${reviewContext(recommendationReviews)}` },
+          { role: "system", content: `${systemPrompt}\n${specialistInstructions[specialist]}\n返答モード: ${replyMode}（推論の深さ=${responseSettings.reasoningEffort}。quickは要点を短く、balancedは自然な対話、deepは比較と理由を丁寧に。ただし会話調は保つ）\n現在の会話段階: ${assessment.phase}\n相談回数: ${assessment.userTurnCount}\n製品提案への同意: ${assessment.proposalRequested ? "あり" : "なし"}\n会話で確認済みの条件（ここにない内容は推測しない）: ${assessment.factSummary.join("・") || "まだ少ない"}\n未確認で提案に影響する次の一点: ${assessment.nextQuestion || "なし"}\n美容領域をまたいだ最近のコンディション: ${conditionSummary || "記録なし"}\n公式確認済みの手持ち（最優先で活用）:\n${productContext(ownedProducts)}\nユーザーが自己登録した手持ち（公式情報は未確認。商品情報を補完・断定しない）:\n${customOwnedItems.length ? customOwnedItems.map((item) => `${item.brand} ${item.name} | ${item.category}${item.note ? ` | メモ=${item.note}` : ""}`).join("\n") : "該当なし"}\n買い足し候補:\n${productContext(safeProducts)}\n買い足し候補の口コミエビデンス（この範囲だけを引用）:\n${reviewContext(recommendationReviews)}` },
           ...history.slice(-12).map((message) => ({ role: message.role, content: message.text })),
           { role: "user", content: images.length ? [{ type: "text", text: input }, ...images.map((image) => ({ type: "image_url", image_url: { url: image } }))] : input },
         ],
@@ -176,7 +193,7 @@ export async function createChatReply(
       ? `${acknowledgement}\n\n${cleanedText}`
       : cleanedText;
     return {
-      ...replyPayload(text, "orcarouter", specialist, assessment, safeProducts, recommendationReviews),
+      ...replyPayload(text, "orcarouter", specialist, assessment, safeProducts, recommendationReviews, replyMode),
       resolvedModel: response.headers.get("x-orca-resolved-model"),
     };
   } catch {

@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./schema";
 
 let appStorageReady: Promise<void> | null = null;
+let ownedItemStorageReady: Promise<void> | null = null;
 
 async function d1Binding() {
   const { env } = await import("cloudflare:workers");
@@ -25,7 +26,7 @@ export async function getDb() {
  * 台帳も同じ方法で揃える。`drizzle/` のマイグレーションと定義を一致させること。
  */
 export async function ensureAppStorage() {
-  if (!appStorageReady) {
+  if (!chatStorageReady) {
     appStorageReady = (async () => {
       const d1 = await d1Binding();
       await d1.batch([
@@ -40,12 +41,6 @@ export async function ensureAppStorage() {
           PRIMARY KEY(owner_key, id)
         )`),
         d1.prepare("CREATE INDEX IF NOT EXISTS chat_sessions_owner_specialist_updated_idx ON chat_sessions (owner_key, specialist_id, updated_at)"),
-        d1.prepare(`CREATE TABLE IF NOT EXISTS deleted_chat_sessions (
-          owner_key text NOT NULL,
-          id text NOT NULL,
-          deleted_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
-          PRIMARY KEY(owner_key, id)
-        )`),
         d1.prepare(`CREATE TABLE IF NOT EXISTS beauty_check_ins (
           owner_key text NOT NULL,
           id text NOT NULL,
@@ -67,6 +62,12 @@ export async function ensureAppStorage() {
           PRIMARY KEY(owner_key, id)
         )`),
         d1.prepare("CREATE INDEX IF NOT EXISTS uploaded_assets_owner_created_idx ON uploaded_assets (owner_key, created_at)"),
+        d1.prepare(`CREATE TABLE IF NOT EXISTS deleted_chat_sessions (
+          owner_key text NOT NULL,
+          id text NOT NULL,
+          deleted_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+          PRIMARY KEY(owner_key, id)
+        )`),
       ]);
     })().catch((error) => {
       appStorageReady = null;
@@ -74,4 +75,30 @@ export async function ensureAppStorage() {
     });
   }
   await appStorageReady;
+}
+
+export async function ensureOwnedItemStorage() {
+  if (!ownedItemStorageReady) {
+    ownedItemStorageReady = (async () => {
+      const d1 = await d1Binding();
+      await d1.batch([
+        d1.prepare(`CREATE TABLE IF NOT EXISTS owned_items (
+          owner_key text NOT NULL,
+          id text NOT NULL,
+          brand text DEFAULT '' NOT NULL,
+          name text NOT NULL,
+          category text NOT NULL,
+          note text,
+          created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+          updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+          PRIMARY KEY(owner_key, id)
+        )`),
+        d1.prepare("CREATE INDEX IF NOT EXISTS owned_items_owner_updated_idx ON owned_items (owner_key, updated_at)"),
+      ]);
+    })().catch((error) => {
+      ownedItemStorageReady = null;
+      throw error;
+    });
+  }
+  await ownedItemStorageReady;
 }
