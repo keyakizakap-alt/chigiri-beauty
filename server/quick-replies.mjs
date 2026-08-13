@@ -5,7 +5,7 @@
  */
 
 const commonRules = [
-  { pattern: /使い方.*商品|商品.*使い方|公式製品候補/, replies: ["まず使い方を整えたい", "商品候補まで見たい", "手持ちだけで考えたい"] },
+  { pattern: /使い方.*商品|商品.*使い方|公式製品候補|商品候補まで|候補まで見/, replies: ["まず使い方を整えたい", "商品候補まで見たい", "手持ちだけで考えたい"] },
   { pattern: /軽さ.*しっとり|しっとり.*軽さ/, replies: ["軽い仕上がりが好き", "しっとり感を優先したい", "中間くらいが理想"] },
   { pattern: /朝.*夜|夜.*朝/, replies: ["朝を簡単にしたい", "夜に丁寧にケアしたい", "どちらも無理なく続けたい"] },
   { pattern: /手持ち.*(商品|製品|候補)|買い足し/, replies: ["手持ち中心で考えたい", "足りないものだけ追加したい", "商品候補も比較したい"] },
@@ -84,7 +84,6 @@ function choicesForQuestion(specialist, question) {
  * @param {"skin" | "hair" | "body" | "makeup" | "nail"} specialist
  * @param {string} assistantText
  * @param {"listen" | "understand" | "align" | "coach" | "propose" | "safety"} phase
- * @param {string} expectedQuestion
  */
 export function suggestedRepliesForQuestion(specialist, assistantText, phase) {
   if (phase === "safety") return [];
@@ -92,9 +91,11 @@ export function suggestedRepliesForQuestion(specialist, assistantText, phase) {
   const visibleQuestion = finalQuestion(assistantText);
   if (!visibleQuestion) return phaseReplies[phase] ?? [];
 
+  // 質問文がルールに一致しない場合でも、会話段階に応じた選択肢は出す。
+  // 生成文は言い回しが毎回変わるため、ここで空を返すと選択肢が出たり
+  // 出なかったりして操作の手がかりが失われる。
   const visibleChoices = choicesForQuestion(specialist, visibleQuestion);
-  if (visibleChoices.length) return visibleChoices;
-  return [];
+  return visibleChoices.length ? visibleChoices : phaseReplies[phase] ?? [];
 }
 
 export { finalQuestion };

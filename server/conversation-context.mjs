@@ -87,6 +87,17 @@ export function isDirectiveRequest(input) {
     || /(使い方|手順|方法).{0,12}(お願い|教えて|知りたい|見たい)/.test(source);
 }
 
+/**
+ * 手持ちアイテムの申告は、直前の質問への回答ではない。ピッカーから送られる
+ * 「手持ちは「A」「B」です。」を、タイミングや好みの答えとして記録してしまうと、
+ * 以降の提案が商品名を条件として扱ってしまう。
+ */
+export function isOwnedItemsDeclaration(input) {
+  const source = normalize(input).trim();
+  return /^手持ちは.+です[。\s]*$/.test(source)
+    || /^手持ちはまだ登録していません[。\s]*$/.test(source);
+}
+
 function addFact(facts, source, pattern, text) {
   if (pattern.test(source) && !facts.includes(text)) facts.push(text);
 }
@@ -393,7 +404,7 @@ function inferredAnswerFact(specialist, key, input) {
  * @param {SpecialistId} specialist
  * @param {string} input
  * @param {Array<{role: "assistant" | "user", text: string}>} history
- * @param {{facts?: string[], knownKeys?: string[], askedKeys?: string[]}} memory
+ * @param {{knownKeys?: string[], askedKeys?: string[]}} memory
  */
 export function deriveConversationContext(specialist, input, history = [], memory = {}) {
   const userTexts = history.filter((entry) => entry.role === "user").map((entry) => entry.text);
@@ -404,7 +415,9 @@ export function deriveConversationContext(specialist, input, history = [], memor
     ...(Array.isArray(memory.knownKeys) ? memory.knownKeys.filter((key) => allowedKeys.has(key)).slice(0, 12) : []),
     ...matched.map((item) => item.key),
   ]);
-  const lastAnsweredKey = isDirectiveRequest(input) ? "" : latestAssistantQuestionKey(specialist, history);
+  const lastAnsweredKey = isDirectiveRequest(input) || isOwnedItemsDeclaration(input)
+    ? ""
+    : latestAssistantQuestionKey(specialist, history);
   const answerFact = inferredAnswerFact(specialist, lastAnsweredKey, input);
   if (lastAnsweredKey && input.trim()) knownKeys.add(lastAnsweredKey);
   const askedKeys = new Set([
@@ -433,17 +446,21 @@ export function deriveConversationContext(specialist, input, history = [], memor
     nail: knownKeys.has("area") && knownKeys.has("concern") && (knownKeys.has("exposure") || knownKeys.has("preference")),
   };
 
-  const previousFacts = Array.isArray(memory.facts)
-    ? memory.facts.filter((fact) => typeof fact === "string" && fact.trim()).map((fact) => fact.trim().slice(0, 120)).slice(0, 20)
-    : [];
+  // facts はクライアントから受け取らず、毎回サーバー側で会話から導出する。
+  // 送り返された文字列をそのままシステムプロンプトへ載せると、任意の指示を
+  // 注入できてしまうため。
   const currentFacts = [...describeKnownFacts(specialist, conversation, matched.map((item) => item.fact)), ...(answerFact ? [answerFact] : [])];
 
   return {
     knownKeys: [...knownKeys],
     askedKeys: [...askedKeys],
-    facts: [...new Set([...previousFacts, ...currentFacts])].slice(-20),
+    facts: [...new Set(currentFacts)].slice(-20),
     enoughContext: enoughBySpecialist[specialist],
     nextQuestion: next?.[1] ?? "",
+    // 質問文の正規表現による逆引きだけに頼ると、言い回し次第で「質問済み」を
+    // 取りこぼして同じことを聞き直してしまう。実際に質問した場合は呼び出し側が
+    // このキーを askedKeys へ足す。
+    nextQuestionKey: next?.[0] ?? "",
     lastAnsweredKey,
   };
 }

@@ -33,7 +33,9 @@ export async function POST(request: Request) {
   const input = body.input?.trim() ?? "";
   const history = (body.history ?? [])
     .filter((message) => (message.role === "assistant" || message.role === "user") && message.text?.trim())
-    .slice(-20)
+    // 確認済みの条件はこの履歴から毎回導出するため、窓が狭いと古い発言の
+    // 悩み・タイミング・好みが失われる。LLM へ渡すのは orca 側で直近12件に絞る。
+    .slice(-60)
     .map((message) => ({
       role: message.role as "assistant" | "user",
       text: message.text!.trim().slice(0, 600),

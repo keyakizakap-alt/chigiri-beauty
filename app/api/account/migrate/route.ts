@@ -1,4 +1,4 @@
-import { ensureChatSessionStorage } from "@/db";
+import { ensureAppStorage } from "@/db";
 
 const ownerCookie = "chigiri_owner";
 const guestIdPattern = /^[0-9a-f-]{36}$/i;
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   const userKey = `user:${await sha256(email)}`;
 
   try {
-    await ensureChatSessionStorage();
+    await ensureAppStorage();
     const { env } = await import("cloudflare:workers");
     const statements = [
       "chat_sessions",

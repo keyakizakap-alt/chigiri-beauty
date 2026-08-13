@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { getDb } from "@/db";
+import { ensureAppStorage, getDb } from "@/db";
 import { uploadedAssets } from "@/db/schema";
 import { requestOwner } from "@/server/request-owner";
 
@@ -17,6 +17,7 @@ function bytesToBase64(buffer: ArrayBuffer) {
 export async function ownedUploadDataUrl(request: Request, id: string) {
   if (!idPattern.test(id)) return null;
   const owner = await requestOwner(request);
+  await ensureAppStorage();
   const rows = await (await getDb()).select({
     objectKey: uploadedAssets.objectKey,
     contentType: uploadedAssets.contentType,

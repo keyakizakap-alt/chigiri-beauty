@@ -1,59 +1,23 @@
-import { getDb } from "@/db";
-import { products } from "@/db/schema";
 import { brandMarkets, officialProducts } from "@/data/official-products";
-import { asc } from "drizzle-orm";
 
-function toDbProduct(product: (typeof officialProducts)[number]) {
-  return {
-      id: product.id,
-      brand: product.brand,
-      name: product.name,
-      category: product.category,
-      volume: product.volume,
-      price: product.price,
-      priceType: product.priceType,
-      currency: product.currency,
-      claimsJson: JSON.stringify(product.claims),
-      ingredientHighlightsJson: JSON.stringify(product.ingredientHighlights),
-      officialUrl: product.officialUrl,
-      sourcePublisher: product.sourcePublisher,
-      sourceCheckedAt: product.sourceCheckedAt,
-      verificationStatus: product.verificationStatus,
-  };
-}
-
-async function syncOfficialCatalog() {
-  const db = await getDb();
-  const batchSize = 12;
-  for (let index = 0; index < officialProducts.length; index += batchSize) {
-    await db
-      .insert(products)
-      .values(officialProducts.slice(index, index + batchSize).map(toDbProduct))
-      .onConflictDoNothing();
-  }
-  return db;
-}
-
-export async function GET() {
-  try {
-    const db = await syncOfficialCatalog();
-    const rows = await db.select().from(products).orderBy(asc(products.brand), asc(products.name));
-    return Response.json({
-      products: rows.map((row) => ({
-        ...row,
-        claims: JSON.parse(row.claimsJson),
-        ingredientHighlights: JSON.parse(row.ingredientHighlightsJson),
-        market: brandMarkets[row.brand] ?? null,
-      })),
-      dataMode: "d1-official-verified",
-    });
-  } catch {
-    return Response.json({
-      products: officialProducts.map((product) => ({
-        ...product,
-        market: brandMarkets[product.brand] ?? null,
-      })),
-      dataMode: "official-verified-static",
-    });
-  }
+/**
+ * 商品カタログはリポジトリ内の公式確認済みデータが唯一の出典。
+ *
+ * 以前はこれをD1へ書き写してから読み戻していたが、
+ * - 1回あたり14列×12件＝168個のプレースホルダになり、D1のバインド上限を超えて
+ *   毎回失敗し、実際には常に静的データへフォールバックしていた
+ * - `onConflictDoNothing` のため、一度書けたとしても `data/official-products.ts`
+ *   の更新がD1側へ反映されず、古い内容を返し続ける
+ * - 提案の根拠（rankOfficialProducts・チャット・口コミ照会）はいずれも静的配列を
+ *   直接読んでおり、D1側の写しは誰も参照していない
+ * という理由から、書き写しをやめて静的データをそのまま返す。
+ */
+export function GET() {
+  return Response.json({
+    products: officialProducts.map((product) => ({
+      ...product,
+      market: brandMarkets[product.brand] ?? null,
+    })),
+    dataMode: "official-verified-static",
+  }, { headers: { "Cache-Control": "public, max-age=300, stale-while-revalidate=3600" } });
 }
