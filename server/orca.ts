@@ -1,5 +1,5 @@
 import { assessConversation, buildLocalReply, hasSafetyConcern, isProposalRequestTurn, proposalAcknowledgement, rankOfficialProducts, suggestedRepliesForAssistant, type ConversationAssessment } from "./chat-engine";
-import { isDirectiveRequest, reflectSpecialistConcern } from "./conversation-context.mjs";
+import { isDirectiveRequest } from "./conversation-context.mjs";
 import { categoryLabels, type VerifiedProduct } from "../data/official-products";
 import { reviewEvidenceForProduct, type ProductReviewEvidence } from "./review-evidence";
 
@@ -97,7 +97,12 @@ function replyPayload(
   products: VerifiedProduct[],
   reviews: ProductReviewEvidence[],
 ) {
-  const askedContextKeys = assessment.nextQuestionKey && text.includes(assessment.nextQuestion)
+  // 生成された返答は同じ意味でも言い回しが変わるため、質問文の完全一致だけで
+  // 判定すると「確認済み」を取りこぼし、次のターンで同じことを聞き直してしまう。
+  // 未確認の一点を渡したうえで質問文が含まれていれば、その項目は聞いたとみなす。
+  const askedThisTurn = Boolean(assessment.nextQuestionKey)
+    && (text.includes(assessment.nextQuestion) || /[？?]/.test(text));
+  const askedContextKeys = askedThisTurn
     ? [...new Set([...assessment.askedContextKeys, assessment.nextQuestionKey])]
     : assessment.askedContextKeys;
   return {
@@ -141,12 +146,26 @@ export async function createChatReply(
     safeProducts,
     recommendationReviews,
   );
-  if (assessment.phase === "listen" || assessment.phase === "safety") return localReply("guided-intake");
-  const groundedShortAnswer = reflectSpecialistConcern(specialist, input, assessment.lastAnsweredContextKey);
-  const controlledShortAnswer = input.trim().length <= 50 && !isDirectiveRequest(input)
-    && (Boolean(assessment.lastAnsweredContextKey) || Boolean(groundedShortAnswer));
-  if (controlledShortAnswer) return localReply("guided-selection");
-  if (!apiKey) return localReply("local-fallback");
+  if (assessment.phase === "safety") return localReply("guided-intake");
+
+  /**
+   * 定型応答へ落とすのは、選択肢をタップしたときのような情報量の少ない一言に限る。
+   * 以前は「50文字以下」かつ「悩みの語が入っている」だけで生成を通さずテンプレートを
+   * 返していたため、日本語のチャットではほとんどの発言が該当し、質問しても答えが
+   * 返らない・毎回同じ型の相づちが続く、といった噛み合わない返答になっていた。
+   */
+  const trimmedInput = input.trim();
+  const shortChoiceAnswer = trimmedInput.length <= 24
+    && !/[？?]/.test(trimmedInput)
+    && !images.length
+    && !isDirectiveRequest(input)
+    && Boolean(assessment.lastAnsweredContextKey)
+    && assessment.phase !== "propose";
+  if (!apiKey) {
+    if (assessment.phase === "listen") return localReply("guided-intake");
+    if (shortChoiceAnswer) return localReply("guided-selection");
+    return localReply("local-fallback");
+  }
 
   try {
     const response = await fetch("https://api.orcarouter.ai/v1/chat/completions", {

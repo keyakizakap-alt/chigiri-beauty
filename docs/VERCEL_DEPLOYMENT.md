@@ -43,7 +43,20 @@ ORCAROUTER_API_KEY       # Secret・本番AI会話に必須
 ORCAROUTER_MODEL         # 例: orcarouter/auto
 RAKUTEN_APPLICATION_ID  # 任意
 RAKUTEN_ACCESS_KEY      # 任意
+GOOGLE_CLIENT_ID         # Googleログインに必須
+GOOGLE_CLIENT_SECRET     # Secret・Googleログインに必須
+AUTH_SECRET              # Secret・セッションCookieの署名鍵
 ```
+
+### Googleログインのリダイレクト設定
+
+Google Cloud ConsoleのOAuthクライアントへ、利用するドメインごとに次のリダイレクトURIを登録します。Preview環境のURLは毎回変わるため、Previewでもログインを試す場合は固定ドメイン（Branch Domain）を割り当て、そのURLを登録してください。
+
+```text
+https://<本番ドメイン>/api/auth/google/callback
+```
+
+`AUTH_SECRET`を変更すると発行済みのセッションは無効になり、利用者は再ログインが必要です。
 
 キーを`NEXT_PUBLIC_`変数、GitHub、`vercel.json`へ書かないでください。PreviewとProductionで別のTurso DB・Blobストアを使うと、本番相談ログへの影響を避けられます。
 
@@ -70,6 +83,7 @@ Git連携ではPRブランチのpushでPreview、`main`へのmergeでProduction�
 ## 確認項目
 
 - トップ画面と5エージェントが表示される
+- Googleアカウントでログイン・ログアウトでき、ログイン前の相談ログが引き継がれる
 - OrcaRouterの応答が返る
 - 相談履歴が再読み込み後も残る
 - 画像を送信でき、別の所有者からは取得できない

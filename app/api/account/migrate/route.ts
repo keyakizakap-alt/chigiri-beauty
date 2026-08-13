@@ -1,16 +1,8 @@
 import { migrateOwnerData } from "@/db";
+import { authenticatedEmail, cookieValue } from "@/server/auth";
 
 const ownerCookie = "chigiri_owner";
 const guestIdPattern = /^[0-9a-f-]{36}$/i;
-
-function cookieValue(request: Request, name: string) {
-  const cookies = request.headers.get("cookie") ?? "";
-  for (const item of cookies.split(";")) {
-    const [key, ...value] = item.trim().split("=");
-    if (key === name) return decodeURIComponent(value.join("="));
-  }
-  return null;
-}
 
 async function sha256(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -28,7 +20,9 @@ function response(data: unknown, status = 200, clearGuest = false) {
 }
 
 export async function POST(request: Request) {
-  const email = request.headers.get("oai-authenticated-user-email")?.trim().toLowerCase();
+  // 署名済みセッション（Googleログイン）か、SIWCの `oai-authenticated-user-email`
+  // ヘッダーで本人確認できた場合だけ、端末のゲストデータをアカウントへ移す。
+  const email = await authenticatedEmail(request);
   if (!email) return response({ error: "ログイン状態を確認できません。" }, 401);
 
   const guestId = cookieValue(request, ownerCookie);

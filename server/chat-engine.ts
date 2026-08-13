@@ -185,8 +185,11 @@ export function assessConversation(
 ): ConversationAssessment {
   const userMessages = history.filter((entry) => entry.role === "user");
   const turns = Math.max(1, userMessages.length + (input.trim() ? 1 : 0));
-  const conversation = normalize([...userMessages.map((entry) => entry.text), input].join(" "));
-  const proposalRequested = proposalPattern.test(conversation) || (turns >= 3 && affirmativePattern.test(normalize(input)));
+  // 提案要求は会話全体ではなく直近の2発言だけで判定する。会話のどこかで一度でも
+  // 「おすすめ」と言うと以降ずっと提案モードになり、別の質問をしても商品提案が
+  // 返ってくる（相談内容と噛み合わない返答の主因）。
+  const recentUserText = normalize([...userMessages.slice(-2).map((entry) => entry.text), input].join(" "));
+  const proposalRequested = proposalPattern.test(recentUserText) || (turns >= 3 && affirmativePattern.test(normalize(input)));
   const context = deriveConversationContext(specialist, input, history, memory);
   const enoughContext = context.enoughContext;
   const details = {
@@ -278,7 +281,9 @@ export function buildLocalReply(
   const profile = specialistProfiles[specialist];
   const assessment = assessConversation(specialist, input, history, memory);
   const proposalRequestedThisTurn = isProposalRequestTurn(input, history);
-  const conversation = [input, ...history.filter((entry) => entry.role === "user").slice(-5).map((entry) => entry.text)].join(" ");
+  // アドバイスの選定は直近の話題に合わせる。5発言分をまとめて見ると、
+  // 数ターン前の別の悩みにひもづく助言が今の相談への返答として出てしまう。
+  const conversation = [input, ...history.filter((entry) => entry.role === "user").slice(-2).map((entry) => entry.text)].join(" ");
   const action = profile.actions.find((candidate) => candidate.pattern.test(conversation))?.advice
     ?? profile.defaultAdvice[variationIndex(input, history, profile.defaultAdvice.length)];
   const recentAssistantText = history.filter((entry) => entry.role === "assistant").slice(-6).map((entry) => entry.text).join("\n");

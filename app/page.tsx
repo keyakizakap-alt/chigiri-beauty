@@ -1,20 +1,21 @@
 import ChigiriApp from "@/components/ChigiriApp";
-import {
-  chatGPTSignInPath,
-  chatGPTSignOutPath,
-  getChatGPTUser,
-} from "@/app/chatgpt-auth";
+import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { googleAuthConfigured, signInPath, signOutPath } from "@/server/auth";
+import { viewerFromCookies } from "@/app/viewer";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const user = await getChatGPTUser();
+  // Googleログインのセッションを優先し、ChatGPT Sites（SIWC）で配信された場合は
+  // プラットフォームが注入する識別ヘッダーへフォールバックする。
+  const viewer = (await viewerFromCookies()) ?? (await getChatGPTUser());
 
   return (
     <ChigiriApp
-      viewer={user ? { displayName: user.displayName } : null}
-      signInPath={chatGPTSignInPath("/")}
-      signOutPath={chatGPTSignOutPath("/")}
+      viewer={viewer ? { displayName: viewer.displayName } : null}
+      signInPath={signInPath("/")}
+      signOutPath={signOutPath("/")}
+      signInAvailable={googleAuthConfigured()}
     />
   );
 }
