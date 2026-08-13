@@ -13,6 +13,7 @@ const checkInApi = await readFile(new URL("../app/api/check-ins/route.ts", impor
 const uploadApi = await readFile(new URL("../app/api/uploads/route.ts", import.meta.url), "utf8");
 const schema = await readFile(new URL("../db/schema.ts", import.meta.url), "utf8");
 const dbSource = await readFile(new URL("../db/index.ts", import.meta.url), "utf8");
+const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const conversationContext = await import(new URL("../server/conversation-context.mjs", import.meta.url));
 const quickReplies = await import(new URL("../server/quick-replies.mjs", import.meta.url));
 const budget = await import(new URL("../server/budget.mjs", import.meta.url));
@@ -33,6 +34,14 @@ test("opens each specialist on a fresh chat while keeping history available", ()
   assert.doesNotMatch(component, /visibilitychange/);
   assert.doesNotMatch(component, /backgroundedAt/);
   assert.doesNotMatch(component, /setMessages\(\(current\) => \[\.\.\.current, initialMessageFor\(nextId\)\]\)/);
+});
+
+test("consultation history remains scrollable without being clipped by the rail footer", () => {
+  assert.match(styles, /\.rail \{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*overflow: hidden;/);
+  assert.match(styles, /\.history-panel \{[^}]*min-height: 0;[^}]*flex: 1;/);
+  assert.match(styles, /\.history-list \{[^}]*min-height: 0;[^}]*flex: 1;[^}]*overflow-y: auto;/);
+  assert.match(styles, /\.rail-bottom \{[^}]*flex: none;[^}]*margin-top: 12px;/);
+  assert.doesNotMatch(styles, /\.history-list \{[^}]*max-height: calc\(100dvh - 560px\)/);
 });
 
 test("shows a short branded splash screen on launch", () => {
