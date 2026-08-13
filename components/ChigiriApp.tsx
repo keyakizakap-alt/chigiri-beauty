@@ -739,8 +739,8 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriA
   );
   const activeSpecialist = specialists.find((item) => item.id === specialistId) ?? specialists[0];
   const visibleSessions = useMemo(
-    () => sessions.filter((session) => session.specialistId === specialistId),
-    [sessions, specialistId]
+    () => [...sessions].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)),
+    [sessions]
   );
   const specialistConditions = useMemo(
     () => conditions.filter((entry) => entry.specialistId === specialistId).sort((a, b) => b.recordedAt.localeCompare(a.recordedAt)),
@@ -1208,6 +1208,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriA
                 >
                   <button type="button" className="history-item" onClick={() => openSession(session)}>
                     <span className="history-title"><b>{session.title}</b><time>{sessionTime(session.updatedAt)}</time></span>
+                    <span className="history-specialist">{specialists.find((item) => item.id === session.specialistId)?.name ?? "美容相談"}</span>
                     <span className="history-preview">{lastMessage.replace(/\n/g, " ").slice(0, 42)}</span>
                   </button>
                   <button type="button" className="history-delete" onClick={() => void deleteSession(session)} disabled={deletingSessionId === session.id} aria-label={`${session.title}を削除`} title="この相談ログを削除">{deletingSessionId === session.id ? "…" : "×"}</button>
@@ -1215,7 +1216,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriA
               );
             }) : historyLoading ? <p className="history-empty">相談ログを読み込んでいます…</p>
               : historyLoadFailed ? null
-                : <p className="history-empty">{activeSpecialist.name}との相談を始めると、ここからあとで振り返れます。</p>}
+                : <p className="history-empty">相談を始めると、5人のコンシェルジュとの履歴をここから振り返れます。</p>}
           </div>
           {historyLoadFailed ? (
             <>

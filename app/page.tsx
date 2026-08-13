@@ -1,20 +1,17 @@
 import ChigiriApp from "@/components/ChigiriApp";
-import {
-  chatGPTSignInPath,
-  chatGPTSignOutPath,
-  getChatGPTUser,
-} from "@/app/chatgpt-auth";
+import { getAuthSession } from "@/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const user = await getChatGPTUser();
+  const session = await getAuthSession();
+  const user = session?.user?.email ? session.user : null;
 
   return (
     <ChigiriApp
-      viewer={user ? { displayName: user.displayName } : null}
-      signInPath={chatGPTSignInPath("/")}
-      signOutPath={chatGPTSignOutPath("/")}
+      viewer={user ? { displayName: user.name ?? user.email ?? "ユーザー" } : null}
+      signInPath="/login"
+      signOutPath="/logout"
     />
   );
 }

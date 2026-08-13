@@ -2,8 +2,8 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { ensureAppStorage, getDb } from "@/db";
 import { chatSessions, deletedChatSessions, uploadedAssets } from "@/db/schema";
 import { deletePrivateImages } from "@/server/blob-store";
+import { privateJson, requestOwner } from "@/server/request-owner";
 
-const ownerCookie = "chigiri_owner";
 const specialists = new Set(["skin", "hair", "body", "makeup", "nail"]);
 const sessionIdPattern = /^[a-zA-Z0-9-]{8,80}$/;
 const pageSize = 40;
@@ -16,40 +16,6 @@ type StoredSession = {
   messages: unknown[];
   [key: string]: unknown;
 };
-
-function cookieValue(request: Request, name: string) {
-  const cookies = request.headers.get("cookie") ?? "";
-  for (const item of cookies.split(";")) {
-    const [key, ...value] = item.trim().split("=");
-    if (key === name) return decodeURIComponent(value.join("="));
-  }
-  return null;
-}
-
-async function sha256(value: string) {
-  const bytes = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function ownerFor(request: Request) {
-  const email = request.headers.get("oai-authenticated-user-email")?.trim().toLowerCase();
-  if (email) return { key: `user:${await sha256(email)}`, setCookie: null as string | null };
-
-  const current = cookieValue(request, ownerCookie);
-  const id = current && /^[0-9a-f-]{36}$/i.test(current) ? current : crypto.randomUUID();
-  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
-  return {
-    key: `guest:${id}`,
-    setCookie: `${ownerCookie}=${encodeURIComponent(id)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=34560000${secure}`,
-  };
-}
-
-function json(data: unknown, status: number, setCookie: string | null) {
-  const headers = new Headers({ "Content-Type": "application/json; charset=utf-8", "Cache-Control": "private, no-store" });
-  if (setCookie) headers.set("Set-Cookie", setCookie);
-  return new Response(JSON.stringify(data), { status, headers });
-}
 
 function validateSession(value: unknown): StoredSession | null {
   if (!value || typeof value !== "object") return null;
@@ -65,14 +31,14 @@ function validateSession(value: unknown): StoredSession | null {
 }
 
 export async function GET(request: Request) {
-  const owner = await ownerFor(request);
+  const owner = await requestOwner(request);
   const url = new URL(request.url);
   const specialist = url.searchParams.get("specialist");
   // specialist は任意。省略時は全担当の相談ログをまとめて返す。担当ごとに
   // 5本のリクエストを投げると、そのうち1本が落ちただけで画面の履歴が
   // すべて空になってしまうため、既定は1回の取得で済ませる。
   if (specialist !== null && !specialists.has(specialist)) {
-    return json({ error: "担当コンシェルジュを確認できません。" }, 400, owner.setCookie);
+    return privateJson({ error: "担当コンシェルジュを確認できません。" }, 400, owner.setCookie);
   }
   const parsedCursor = Number(url.searchParams.get("cursor") ?? "0");
   const offset = Number.isSafeInteger(parsedCursor) && parsedCursor >= 0 ? parsedCursor : 0;
@@ -93,22 +59,22 @@ export async function GET(request: Request) {
     const sessions = rows.slice(0, pageSize).flatMap((row) => {
       try { return [JSON.parse(row.payloadJson)]; } catch { return []; }
     });
-    return json({ sessions, nextCursor: hasMore ? String(offset + pageSize) : null }, 200, owner.setCookie);
+    return privateJson({ sessions, nextCursor: hasMore ? String(offset + pageSize) : null }, 200, owner.setCookie);
   } catch {
-    return json({ error: "相談ログを読み込めませんでした。" }, 503, owner.setCookie);
+    return privateJson({ error: "相談ログを読み込めませんでした。" }, 503, owner.setCookie);
   }
 }
 
 export async function POST(request: Request) {
-  const owner = await ownerFor(request);
+  const owner = await requestOwner(request);
   let body: { sessions?: unknown[] };
-  try { body = await request.json(); } catch { return json({ error: "保存内容を確認できません。" }, 400, owner.setCookie); }
+  try { body = await request.json(); } catch { return privateJson({ error: "保存内容を確認できません。" }, 400, owner.setCookie); }
   if (!Array.isArray(body.sessions) || body.sessions.length < 1 || body.sessions.length > 50) {
-    return json({ error: "保存できる相談ログは1回につき50件までです。" }, 400, owner.setCookie);
+    return privateJson({ error: "保存できる相談ログは1回につき50件までです。" }, 400, owner.setCookie);
   }
   const sessions = body.sessions.map(validateSession);
   if (sessions.some((session) => !session)) {
-    return json({ error: "相談ログの形式を確認できません。" }, 400, owner.setCookie);
+    return privateJson({ error: "相談ログの形式を確認できません。" }, 400, owner.setCookie);
   }
 
   try {
@@ -140,9 +106,9 @@ export async function POST(request: Request) {
       });
       saved += 1;
     }
-    return json({ saved }, 200, owner.setCookie);
+    return privateJson({ saved }, 200, owner.setCookie);
   } catch {
-    return json({ error: "相談ログを保存できませんでした。" }, 503, owner.setCookie);
+    return privateJson({ error: "相談ログを保存できませんでした。" }, 503, owner.setCookie);
   }
 }
 
@@ -168,9 +134,9 @@ function imageReferences(payloadJson: string) {
 }
 
 export async function DELETE(request: Request) {
-  const owner = await ownerFor(request);
+  const owner = await requestOwner(request);
   const id = new URL(request.url).searchParams.get("id");
-  if (!id || !sessionIdPattern.test(id)) return json({ error: "削除する相談ログを確認できません。" }, 400, owner.setCookie);
+  if (!id || !sessionIdPattern.test(id)) return privateJson({ error: "削除する相談ログを確認できません。" }, 400, owner.setCookie);
 
   try {
     await ensureAppStorage();
@@ -194,8 +160,8 @@ export async function DELETE(request: Request) {
       try { await deletePrivateImages([...new Set(references.keys)]); }
       catch { /* The conversation is deleted even if an orphaned image needs later cleanup. */ }
     }
-    return json({ deleted: true }, 200, owner.setCookie);
+    return privateJson({ deleted: true }, 200, owner.setCookie);
   } catch {
-    return json({ error: "相談ログを削除できませんでした。" }, 503, owner.setCookie);
+    return privateJson({ error: "相談ログを削除できませんでした。" }, 503, owner.setCookie);
   }
 }
