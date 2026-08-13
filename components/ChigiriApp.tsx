@@ -349,6 +349,8 @@ function now() {
 
 // 表示までに少しだけ間を置き、内容量に応じた自然な会話テンポをつくる。
 // 生成モデルの品質・コストを変えず、待機中は既存のタイピング表示で伝える。
+// これは「返答までの最短時間」であって待ち時間の上乗せではない。API が
+// すでにその時間を使っていれば、追加では待たせない。
 function naturalReplyDelay(text: string, phase: ConversationPhase | undefined, mode: ReplyMode) {
   const characters = text.replace(/\s/g, "").length;
   const timing = mode === "quick"
@@ -373,6 +375,10 @@ function productImageSource(product: VerifiedProduct) {
 function productUseCaution(product: VerifiedProduct) {
   const [firstCheck, secondCheck] = productInsight(product).checkPoints;
   return `${firstCheck}をまず確認してください。違和感があれば使用を止め、${secondCheck ?? "使い始めた時期や重ね使い"}も一緒に振り返ると原因を切り分けやすくなります。`;
+}
+
+function nowMs() {
+  return Date.now();
 }
 
 function createSessionId() {
@@ -568,14 +574,26 @@ export default function ChigiriApp() {
     return () => controller.abort();
   }, [detailProductId]);
 
+  // 重ねて開くパネルはどれも Escape で閉じられるようにする。商品詳細だけが
+  // 対応していると、他のパネルは×ボタンを探すまで閉じられない。
+  // 手前に開いているものから1枚ずつ閉じる。
   useEffect(() => {
-    if (!detailProductId) return;
+    const layers: Array<[boolean, () => void]> = [
+      [Boolean(detailProductId), () => setDetailProductId(null)],
+      [historyReviewOpen, () => setHistoryReviewOpen(false)],
+      [planOpen, () => setPlanOpen(false)],
+      [conditionOpen, () => setConditionOpen(false)],
+      [shelfOpen, () => setShelfOpen(false)],
+      [historyOpen, () => setHistoryOpen(false)],
+    ];
+    const topmost = layers.find(([open]) => open);
+    if (!topmost) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDetailProductId(null);
+      if (event.key === "Escape") topmost[1]();
     };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [detailProductId]);
+  }, [conditionOpen, detailProductId, historyOpen, historyReviewOpen, planOpen, shelfOpen]);
 
   useEffect(() => {
     if (!historyReady) return;
@@ -823,6 +841,7 @@ export default function ChigiriApp() {
     setBusy(true);
     if (stage === "budget" && value) setBudget(parseBudget(value));
 
+    const requestStartedAt = nowMs();
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -862,7 +881,8 @@ export default function ChigiriApp() {
       // ピッカーの見出し（inventoryPrompts）が担当し、質問が二重に並ばないようにする。
       const assistantText = data.text ?? "うまくお返事をまとめられませんでした。少し言い換えて、もう一度送ってもらえますか？";
       setServiceNotice(data.mode === "local-fallback" ? "今は基本のケア案内でお返ししています。詳しいパーソナル提案は、少し時間をおいてお試しください。" : "");
-      await new Promise((resolve) => setTimeout(resolve, naturalReplyDelay(assistantText, data.conversationPhase, replyModes[specialistId])));
+      const remainingPause = naturalReplyDelay(assistantText, data.conversationPhase, replyModes[specialistId]) - (nowMs() - requestStartedAt);
+      if (remainingPause > 0) await new Promise((resolve) => setTimeout(resolve, remainingPause));
       setMessages((current) => [
         ...current,
         {

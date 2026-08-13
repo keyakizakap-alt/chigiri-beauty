@@ -37,6 +37,22 @@ test("opens each specialist on a fresh chat while keeping history available", ()
   assert.doesNotMatch(component, /setMessages\(\(current\) => \[\.\.\.current, initialMessageFor\(nextId\)\]\)/);
 });
 
+test("every overlay can be dismissed with Escape", () => {
+  // 商品詳細だけが Escape に対応していると、他のパネルは×ボタンを
+  // 見つけるまで閉じられない。手前の1枚だけを閉じる。
+  assert.match(component, /const topmost = layers\.find/);
+  for (const setter of ["setDetailProductId", "setHistoryReviewOpen", "setPlanOpen", "setConditionOpen", "setShelfOpen", "setHistoryOpen"]) {
+    assert.match(component, new RegExp(`\\[[^\\]]*, \\(\\) => ${setter}\\(`));
+  }
+});
+
+test("the reply pause is a floor on total wait, not an addition", () => {
+  // 応答が届いてから固定で待つと、API がすでに使った時間へ上乗せされる。
+  assert.match(component, /const requestStartedAt = nowMs\(\);/);
+  assert.match(component, /naturalReplyDelay\([^)]*\) - \(nowMs\(\) - requestStartedAt\)/);
+  assert.match(component, /if \(remainingPause > 0\)/);
+});
+
 test("shows a short branded splash screen on launch", () => {
   assert.match(component, /app-splash/);
   assert.match(component, /setSplashVisible\(false\)/);
