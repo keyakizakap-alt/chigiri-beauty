@@ -13,7 +13,15 @@ export type ReviewSnapshot = {
 export type ProductReviewEvidence = {
   productId: string;
   review: ReviewSnapshot;
-  links: { rakuten: string; cosme: string };
+  links: ReviewLinks;
+};
+
+export type ReviewLinks = {
+  rakuten: string;
+  cosme: string;
+  lips: string;
+  qoo10: string;
+  amazon: string;
 };
 
 export function publicReviewLinks(product: VerifiedProduct) {
@@ -21,6 +29,9 @@ export function publicReviewLinks(product: VerifiedProduct) {
   return {
     rakuten: `https://search.rakuten.co.jp/search/mall/${keyword}/`,
     cosme: `https://www.cosme.net/search/?fw=${keyword}`,
+    lips: `https://lipscosme.com/search?text=${keyword}`,
+    qoo10: `https://www.qoo10.jp/s/${keyword}?keyword=${keyword}`,
+    amazon: `https://www.amazon.co.jp/s?k=${keyword}`,
   };
 }
 

@@ -13,14 +13,15 @@ const rules = {
   ],
   hair: [
     { key: "concern", pattern: /広が|パサ|うねり|べたつ|フケ|かゆ|ダメージ|まとま/, fact: "髪・頭皮の悩みが具体的" },
+    { key: "scalpState", pattern: /頭皮.{0,12}([べベ][たタ]つ|乾燥|かゆ|フケ)|([べベ][たタ]つ|乾燥|かゆ|フケ).{0,12}頭皮/, fact: "頭皮で気になる状態が分かっている" },
     { key: "routine", pattern: /カラー|ブリーチ|アイロン|コテ|ドライヤー|毎朝|週\s*\d|月\s*\d/, fact: "カラーや熱の習慣が分かっている" },
-    { key: "preference", pattern: /軽い仕上がり|重い.{0,8}(苦手|避け)|オイル.{0,8}(苦手|避け)|しっとり|手触りを.{0,6}(重視|優先)|まとまりを.{0,6}(重視|優先)|時短|手間|予算|香り|仕上がりを優先/, fact: "仕上がりや手間の希望がある" },
+    { key: "preference", pattern: /軽い仕上がり|しっとり|手触りを.{0,6}(重視|優先)|まとまりを.{0,6}(重視|優先)|時短|手間|予算|香り|仕上がりを優先/, fact: "仕上がりや手間の希望がある" },
   ],
   body: [
     { key: "area", pattern: /全身|首|デコルテ|腕|ひじ|肘|手の甲|背中|お腹|脚|すね|膝|ひざ|かかと|足/, fact: "気になる部位が分かっている" },
     { key: "concern", pattern: /乾燥|かさつ|粉|ざらつ|ごわつ|べたつ|日焼け|紫外線|ムダ毛|におい/, fact: "ボディの悩みが具体的" },
     { key: "timing", pattern: /入浴後|お風呂上がり|朝|夜|日中|季節|毎日|週\s*\d/, fact: "気になる時間やケア頻度が分かっている" },
-    { key: "preference", pattern: /[べベ]タつか|さらさら|しっとり|時短|短時間|手間|無香料|香り|予算/, fact: "使用感・香り・手間の希望がある" },
+    { key: "preference", pattern: /[べベ][たタ]つか|さらさら|しっとり|時短|短時間|手間|無香料|香り|予算/, fact: "使用感・香り・手間の希望がある" },
   ],
   makeup: [
     { key: "focus", pattern: /下地|ファンデ|ファンデーション|コンシーラー|パウダー|眉|アイシャドウ|アイライン|マスカラ|チーク|リップ|口紅|ベースメイク|アイメイク/, fact: "相談したいメイク箇所が分かっている" },
@@ -34,7 +35,7 @@ const rules = {
     { key: "area", pattern: /爪先|爪の先|爪表面|爪の表面|甘皮|ささくれ|手肌|手の甲|指先|ハンド/, fact: "爪・手肌の気になる場所が分かっている" },
     { key: "concern", pattern: /乾燥|割れ|欠け|二枚爪|縦筋|ささくれ|手荒れ|はがれ|持ち|黄ばみ/, fact: "爪・手肌の悩みが具体的" },
     { key: "exposure", pattern: /水仕事|手洗い|消毒|アルコール|ジェル|ポリッシュ|除光液|アセトン|セルフネイル|サロン/, fact: "水仕事やネイル習慣が分かっている" },
-    { key: "preference", pattern: /日中|夜|こまめ|時短|[べベ]タつか|香り|色|予算|持ち/, fact: "ケアの時間・使用感・仕上がりの希望がある" },
+    { key: "preference", pattern: /日中|夜|こまめ|時短|[べベ][たタ]つか|香り|色|予算|持ち/, fact: "ケアの時間・使用感・仕上がりの希望がある" },
   ],
 };
 
@@ -46,6 +47,7 @@ const questions = {
   ],
   hair: [
     ["concern", "いちばん変えたいのは、まとまり・手触り・頭皮の快適さのどれですか？"],
+    ["scalpState", "頭皮で気になるのは、ベタつき・乾燥・かゆみのどれですか？"],
     ["routine", "カラーやアイロンは、普段どのくらい使いますか？"],
     ["preference", "手間を増やさないことと仕上がりなら、どちらを優先したいですか？"],
   ],
@@ -95,7 +97,7 @@ function describeKnownFacts(specialist, source, fallbackFacts) {
     addFact(facts, source, /乾燥/, "乾燥が気になる");
     addFact(facts, source, /つっぱ|張る|張って/, "肌のつっぱり・張る感じがある");
     addFact(facts, source, /粉っぽ|粉をふ/, "粉っぽさが気になる");
-    addFact(facts, source, /[べベ]タつ|皮脂/, "ベタつき・皮脂が気になる");
+    addFact(facts, source, /[べベ][たタ]つ|皮脂/, "ベタつき・皮脂が気になる");
     addFact(facts, source, /毛穴/, "毛穴が気になる");
     addFact(facts, source, /赤み/, "赤みが気になる");
     addFact(facts, source, /刺激|ヒリつ|ぴりつ|ピリつ/, "刺激感が気になる");
@@ -108,14 +110,13 @@ function describeKnownFacts(specialist, source, fallbackFacts) {
     addFact(facts, source, /広が|まとまら/, "髪の広がり・まとまりにくさが気になる");
     addFact(facts, source, /パサ|乾燥/, "髪のパサつき・乾燥が気になる");
     addFact(facts, source, /うねり/, "髪のうねりが気になる");
-    addFact(facts, source, /[べベ]タつ|皮脂/, "頭皮のベタつきが気になる");
+    addFact(facts, source, /[べベ][たタ]つ|皮脂/, "頭皮のベタつきが気になる");
     addFact(facts, source, /フケ/, "フケが気になる");
     addFact(facts, source, /かゆ/, "頭皮のかゆみが気になる");
     addFact(facts, source, /カラー|ブリーチ/, "カラー・ブリーチの習慣がある");
     addFact(facts, source, /アイロン|コテ/, "アイロン・コテを使う");
     addFact(facts, source, /時短|手間を増やしたくない/, "手間を増やさないケアを希望");
     addFact(facts, source, /手触り/, "手触りを重視");
-    addFact(facts, source, /重い.{0,8}(苦手|避け)|オイル.{0,8}(苦手|避け)/, "重いオイルは避けたい");
   } else if (specialist === "makeup") {
     addFact(facts, source, /リップ|口紅/, "リップを探している");
     addFact(facts, source, /下地|ファンデ|ファンデーション|コンシーラー|パウダー|ベースメイク/, "ベースメイクを相談したい");
@@ -143,7 +144,7 @@ function describeKnownFacts(specialist, source, fallbackFacts) {
     addFact(facts, source, /乾燥|かさつ|粉/, "乾燥が気になる");
     addFact(facts, source, /ざらつ|ごわつ/, "ざらつきが気になる");
     addFact(facts, source, /入浴後|お風呂上がり/, "入浴後に気になりやすい");
-    addFact(facts, source, /[べベ]タつか|さらさら/, "ベタつきにくい使用感を希望");
+    addFact(facts, source, /[べベ][たタ]つか|さらさら/, "ベタつきにくい使用感を希望");
     addFact(facts, source, /無香料|香りなし/, "香りなしを希望");
   } else if (specialist === "nail") {
     addFact(facts, source, /爪先|爪の先|爪表面|爪の表面/, "爪先・表面のケア");
@@ -177,7 +178,7 @@ export function reflectSkinConcern(input) {
     if (hasTightness) concerns.push("肌のつっぱり・張る感じ");
   }
   if (/粉っぽ|粉をふ/.test(source)) concerns.push("粉っぽさ");
-  if (/[べベ]タつ|皮脂/.test(source)) concerns.push("ベタつき・皮脂");
+  if (/[べベ][たタ]つ|皮脂/.test(source)) concerns.push("ベタつき・皮脂");
   if (/毛穴/.test(source)) concerns.push("毛穴");
   if (/赤み/.test(source)) concerns.push("赤み");
   if (/刺激|ヒリつ|ぴりつ|ピリつ/.test(source)) concerns.push("刺激感");
@@ -222,14 +223,12 @@ export function reflectSpecialistConcern(specialist, input, lastAnsweredKey = ""
       [/広が|まとまら/, "髪の広がり・まとまりにくさ"],
       [/パサ|乾燥/, "髪のパサつき・乾燥"],
       [/うねり/, "髪のうねり"],
-      [/[べベ]タつ|皮脂/, "頭皮のベタつき"],
+      [/[べベ][たタ]つ|皮脂/, "頭皮のベタつき"],
       [/フケ/, "フケ"],
       [/かゆ/, "頭皮のかゆみ"],
       [/ダメージ/, "髪のダメージ"],
     ]);
     const timing = firstMatch(source, [[/翌朝|朝起き/, "翌朝に"], [/朝/, "朝に"], [/乾かした(後|直後)/, "乾かした後に"], [/日中/, "日中に"]]);
-    const preference = /重い.{0,8}(苦手|避け)|オイル.{0,8}(苦手|避け)/.test(source) ? "重いオイルは避けたい" : "";
-    if (concern && preference) return `${timing}${concern}を整えたい一方で、${preference}んですね。`;
     if (concern) return `${timing}${concern}が気になるんですね。`;
   }
 
@@ -238,10 +237,8 @@ export function reflectSpecialistConcern(specialist, input, lastAnsweredKey = ""
       [/すね/, "すね"], [/ひじ|肘/, "ひじ"], [/ひざ|膝/, "ひざ"], [/かかと/, "かかと"],
       [/背中/, "背中"], [/首|デコルテ/, "首・デコルテ"], [/腕/, "腕"], [/全身/, "全身"],
     ]);
-    const concern = firstMatch(source, [[/乾燥|かさつ|粉/, "乾燥"], [/ざらつ|ごわつ/, "ざらつき"], [/[べベ]タつ/, "ベタつき"], [/日焼け|紫外線/, "紫外線"], [/におい/, "におい"]]);
+    const concern = firstMatch(source, [[/乾燥|かさつ|粉/, "乾燥"], [/ざらつ|ごわつ/, "ざらつき"], [/[べベ][たタ]つ/, "ベタつき"], [/日焼け|紫外線/, "紫外線"], [/におい/, "におい"]]);
     const timing = firstMatch(source, [[/入浴後|お風呂上がり/, "入浴後に"], [/日中/, "日中に"], [/朝/, "朝に"], [/夜/, "夜に"]]);
-    const preference = /[べベ]タつか|さらさら/.test(source) ? "ベタつきにくさも大切" : /無香料|香りなし/.test(source) ? "香りなしも大切" : "";
-    if (area && concern && preference) return `${timing}${area}の${concern}が気になりつつ、${preference}なんですね。`;
     if (area && concern) return `${timing}${area}の${concern}が気になるんですね。`;
     if (area) return `${area}が気になるんですね。`;
     if (concern) return `ボディの${concern}が気になるんですね。`;
@@ -254,10 +251,7 @@ export function reflectSpecialistConcern(specialist, input, lastAnsweredKey = ""
     ]);
     const issue = firstMatch(source, [[/色落ち/, "色落ち"], [/テカリ|皮脂/, "テカリ"], [/よれ|崩れ/, "崩れ"], [/乾燥|粉っぽ/, "乾燥・粉っぽさ"], [/にじみ/, "にじみ"]]);
     const finish = firstMatch(source, [[/ツヤ/, "ツヤのある"], [/マット/, "マットな"], [/ナチュラル|自然/, "自然な"], [/華やか|アイドル/, "華やかな"]]);
-    const scene = firstMatch(source, [[/ライブ|イベント/, "ライブやイベント"], [/仕事|オフィス/, "仕事"], [/食事|デート|お出かけ/, "食事やお出かけ"], [/普段/, "普段"]]);
-    if (focus && issue && scene) return `${scene}で使う${focus}の、${issue}を整えたいんですね。`;
     if (focus && issue) return `${focus}の${issue}が気になるんですね。`;
-    if (focus && finish) return `${focus}を${finish}仕上がりにしたいんですね。`;
     if (focus) return `${focus}について相談したいんですね。`;
     if (finish) return `${finish}仕上がりが好みなんですね。`;
   }
@@ -266,9 +260,8 @@ export function reflectSpecialistConcern(specialist, input, lastAnsweredKey = ""
     const area = firstMatch(source, [[/爪先|爪の先|爪表面|爪の表面/, "爪先・表面"], [/甘皮|ささくれ/, "甘皮まわり"], [/手肌|手の甲|指先|ハンド/, "手肌"]]);
     const concern = firstMatch(source, [[/割れ|欠け|二枚爪/, "割れ・欠け"], [/乾燥/, "乾燥"], [/手荒れ/, "手荒れ"], [/はがれ|持ち/, "ネイルの持ち"], [/縦筋/, "縦筋"]]);
     const exposure = /水仕事|手洗い|消毒|アルコール/.test(source) ? "水仕事や手洗いが多くて、" : "";
-    const timing = /夜/.test(source) ? "夜ならケアしやすく、" : /日中|こまめ/.test(source) ? "日中ならケアしやすく、" : "";
     if (/爪先|爪の先/.test(source) && /欠け/.test(source)) return `${exposure}爪先が欠けるのが気になるんですね。`;
-    if (area && concern) return `${exposure}${timing}${area}の${concern}が気になるんですね。`;
+    if (area && concern) return `${exposure}${area}の${concern}が気になるんですね。`;
     if (area) return `${exposure}${area}が気になるんですね。`;
     if (concern) return `${exposure}${concern}が気になるんですね。`;
   }
@@ -282,6 +275,7 @@ export function reflectSpecialistConcern(specialist, input, lastAnsweredKey = ""
       },
       hair: {
         concern: `いちばん変えたいのは「${answer}」なんですね。`,
+        scalpState: `頭皮では「${answer}」が気になるんですね。`,
         routine: `カラーやアイロンは「${answer}」くらいなんですね。`,
         preference: `「${answer}」を優先したいんですね。`,
       },
@@ -313,12 +307,13 @@ export function reflectSpecialistConcern(specialist, input, lastAnsweredKey = ""
 
 const assistantQuestionRules = {
   skin: [
-    ["concern", /いちばん気になる|乾燥.{0,8}[べベ]タつき.{0,8}刺激/],
+    ["concern", /いちばん気になる|乾燥.{0,8}[べベ][たタ]つき.{0,8}刺激/],
     ["timing", /どんなとき|いつ.{0,8}気になる|洗顔.{0,8}日中|気になるタイミング/],
     ["preference", /軽さ.{0,8}しっとり|仕上がり.{0,12}優先/],
   ],
   hair: [
     ["concern", /いちばん変えたい|優先したい.{0,20}(まとまり|手触り|頭皮)|まとまり.{0,8}手触り.{0,8}頭皮/],
+    ["scalpState", /頭皮.{0,12}([べベ][たタ]つき|乾燥|かゆみ)|([べベ][たタ]つき|乾燥|かゆみ).{0,12}どれ/],
     ["routine", /カラー|ブリーチ|アイロン|コテ|熱.{0,12}(頻度|どのくらい)|使う頻度/],
     ["preference", /手間.{0,20}(仕上がり|増や)|仕上がり.{0,12}優先|夜.{0,12}丁寧なケア/],
   ],
@@ -333,7 +328,7 @@ const assistantQuestionRules = {
     ["area", /どの部位|気になる.{0,8}(部位|場所)/],
     ["concern", /その部位|乾燥.{0,8}ざらつき.{0,8}刺激/],
     ["timing", /入浴後.{0,8}日中|気になる.{0,8}(時間|タイミング)/],
-    ["preference", /[べベ]タつきにくさ.{0,8}保湿感.{0,8}香り|最優先/],
+    ["preference", /[べベ][たタ]つきにくさ.{0,8}保湿感.{0,8}香り|最優先/],
   ],
   nail: [
     ["area", /爪先.{0,8}甘皮.{0,8}手肌|気になる.{0,8}(場所|どこ)/],
@@ -351,6 +346,7 @@ const inferredFactLabels = {
   },
   hair: {
     concern: "髪・頭皮で優先したいこと",
+    scalpState: "頭皮で気になる状態",
     routine: "カラーや熱を使う頻度",
     preference: "仕上がり・手間の希望",
   },
@@ -420,13 +416,18 @@ export function deriveConversationContext(specialist, input, history = [], memor
   const colorSelectionRequested = specialist === "makeup"
     && /似合|パーソナルカラー|色味|カラー(を|が|選|提案|知)|リップ.{0,10}(色|カラー)|口紅.{0,10}(色|カラー)|チーク.{0,10}(色|カラー)|アイシャドウ.{0,10}(色|カラー)/.test(conversation.replace(/色落ち/g, ""));
   const personalColorQuestion = ["personalColor", "パーソナルカラーは診断済みですか？ 分かればタイプを、分からなければ「分からない」で大丈夫です。"];
+  const scalpFocusSelected = specialist === "hair" && /頭皮/.test(conversation);
   const next = colorSelectionRequested && !knownKeys.has("personalColor") && !askedKeys.has("personalColor")
     ? personalColorQuestion
-    : questions[specialist].find(([key]) => !knownKeys.has(key) && !askedKeys.has(key));
+    : questions[specialist].find(([key]) => {
+      if (specialist === "hair" && key === "scalpState" && !scalpFocusSelected) return false;
+      if (specialist === "hair" && key === "routine" && scalpFocusSelected) return false;
+      return !knownKeys.has(key) && !askedKeys.has(key);
+    });
   const makeupBaseEnough = knownKeys.has("focus") && ["scene", "issue", "finish"].filter((key) => knownKeys.has(key)).length >= 2;
   const enoughBySpecialist = {
     skin: knownKeys.has("concern") && (knownKeys.has("timing") || knownKeys.has("preference")),
-    hair: knownKeys.has("concern") && (knownKeys.has("routine") || knownKeys.has("preference")),
+    hair: knownKeys.has("concern") && (scalpFocusSelected ? knownKeys.has("scalpState") : (knownKeys.has("routine") || knownKeys.has("preference"))),
     body: knownKeys.has("area") && knownKeys.has("concern") && (knownKeys.has("timing") || knownKeys.has("preference")),
     makeup: makeupBaseEnough && (!colorSelectionRequested || knownKeys.has("personalColor")),
     nail: knownKeys.has("area") && knownKeys.has("concern") && (knownKeys.has("exposure") || knownKeys.has("preference")),

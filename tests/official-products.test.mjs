@@ -177,12 +177,13 @@ test("every specialist exposes ingredient, comparison, timing, and review guidan
 test("review UI links to sources without copying review text", async () => {
   const component = await readFile(new URL("../components/ChigiriApp.tsx", import.meta.url), "utf8");
   const reviewEvidence = await readFile(new URL("../server/review-evidence.ts", import.meta.url), "utf8");
-  assert.match(component, /楽天市場で評価を見る/);
-  assert.match(component, /@cosmeで口コミを見る/);
-  assert.match(component, /使い方が近い人の感想/);
+  for (const source of ["LIPS", "@cosme", "Qoo10", "楽天市場", "Amazon"]) assert.match(component, new RegExp(source));
+  assert.match(component, /確認するサイト/);
+  assert.match(component, /口コミは個人の感想/);
   assert.match(component, /proposal-review/);
   assert.match(component, /recommendationReviews/);
   assert.match(reviewEvidence, /reviewAverage/);
   assert.match(reviewEvidence, /reviewCount/);
   assert.match(reviewEvidence, /AbortController/);
+  for (const key of ["lips", "cosme", "qoo10", "rakuten", "amazon"]) assert.match(reviewEvidence, new RegExp(`${key}:`));
 });

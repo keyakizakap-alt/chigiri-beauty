@@ -957,7 +957,7 @@ export const officialProducts: VerifiedProduct[] = [
     claims: ["乾燥が気になる身体にうるおいを与え、赤ちゃんからシニアまで使えるローション"],
     ingredientHighlights: ["セラミド機能成分（公式シリーズ説明）"],
     recommendationTags: ["全身", "乾燥", "敏感", "家族", "ポンプ", "時短"],
-    officialUrl: "https://www.kao-kirei.com/ja/item/kbb/curel/4901301321107/",
+    officialUrl: "https://www.kao-kirei.com/ja/official/curel/listen_care/",
     sourcePublisher: "花王",
     sourceCheckedAt: "2026-08-10",
     verificationStatus: "official_verified",
