@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { getDb } from "@/db";
+import { ensureAppStorage, getDb } from "@/db";
 import { chatSessions, uploadedAssets } from "@/db/schema";
 import { privateJson, requestOwner } from "@/server/request-owner";
 
@@ -34,6 +34,7 @@ export async function POST(request: Request) {
       customMetadata: { originalName: fileName },
     });
     try {
+      await ensureAppStorage();
       await (await getDb()).insert(uploadedAssets).values({
         ownerKey: owner.key,
         id,
@@ -61,6 +62,7 @@ export async function GET(request: Request) {
     return new Response("Not found", { status: 404 });
   }
   try {
+    await ensureAppStorage();
     const db = await getDb();
     let objectKey: string | null = null;
     if (id && idPattern.test(id)) {
@@ -103,6 +105,7 @@ export async function DELETE(request: Request) {
   const id = new URL(request.url).searchParams.get("id");
   if (!id || !idPattern.test(id)) return privateJson({ error: "削除する画像を確認できません。" }, 400, owner.setCookie);
   try {
+    await ensureAppStorage();
     const db = await getDb();
     const rows = await db.select({ objectKey: uploadedAssets.objectKey })
       .from(uploadedAssets)

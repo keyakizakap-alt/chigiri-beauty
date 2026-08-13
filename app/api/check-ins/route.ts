@@ -1,5 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
-import { getDb } from "@/db";
+import { ensureAppStorage, getDb } from "@/db";
 import { beautyCheckIns } from "@/db/schema";
 import { privateJson as json, requestOwner as ownerFor } from "@/server/request-owner";
 
@@ -46,6 +46,7 @@ function validate(value: unknown): CheckIn | null {
 export async function GET(request: Request) {
   const owner = await ownerFor(request);
   try {
+    await ensureAppStorage();
     const db = await getDb();
     const rows = await db.select({ payloadJson: beautyCheckIns.payloadJson })
       .from(beautyCheckIns)
@@ -68,6 +69,7 @@ export async function POST(request: Request) {
   const entry = validate(body);
   if (!entry) return json({ error: "記録内容を確認してください。" }, 400, owner.setCookie);
   try {
+    await ensureAppStorage();
     const db = await getDb();
     await db.insert(beautyCheckIns).values({
       ownerKey: owner.key,
@@ -90,6 +92,7 @@ export async function DELETE(request: Request) {
   const id = new URL(request.url).searchParams.get("id");
   if (!id || !idPattern.test(id)) return json({ error: "削除する記録を確認できません。" }, 400, owner.setCookie);
   try {
+    await ensureAppStorage();
     const db = await getDb();
     await db.delete(beautyCheckIns).where(and(eq(beautyCheckIns.ownerKey, owner.key), eq(beautyCheckIns.id, id)));
     return json({ deleted: true }, 200, owner.setCookie);

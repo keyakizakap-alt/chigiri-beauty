@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { ensureChatSessionStorage, getDb } from "@/db";
+import { ensureAppStorage, getDb } from "@/db";
 import { chatSessions, deletedChatSessions, uploadedAssets } from "@/db/schema";
 import { privateJson as json, requestOwner as ownerFor } from "@/server/request-owner";
 
@@ -43,7 +43,7 @@ export async function GET(request: Request) {
   const offset = Number.isSafeInteger(parsedCursor) && parsedCursor >= 0 ? parsedCursor : 0;
 
   try {
-    await ensureChatSessionStorage();
+    await ensureAppStorage();
     const db = await getDb();
     const owned = specialist === null
       ? eq(chatSessions.ownerKey, owner.key)
@@ -77,7 +77,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    await ensureChatSessionStorage();
+    await ensureAppStorage();
     const db = await getDb();
     let saved = 0;
     for (const session of sessions as StoredSession[]) {
@@ -138,7 +138,7 @@ export async function DELETE(request: Request) {
   if (!id || !sessionIdPattern.test(id)) return json({ error: "削除する相談ログを確認できません。" }, 400, owner.setCookie);
 
   try {
-    await ensureChatSessionStorage();
+    await ensureAppStorage();
     const db = await getDb();
     const existing = await db.select({ payloadJson: chatSessions.payloadJson })
       .from(chatSessions)

@@ -11,6 +11,7 @@ const quickReplySource = await readFile(new URL("../server/quick-replies.mjs", i
 const budgetSource = await readFile(new URL("../server/budget.mjs", import.meta.url), "utf8");
 const checkInApi = await readFile(new URL("../app/api/check-ins/route.ts", import.meta.url), "utf8");
 const uploadApi = await readFile(new URL("../app/api/uploads/route.ts", import.meta.url), "utf8");
+const productApi = await readFile(new URL("../app/api/products/route.ts", import.meta.url), "utf8");
 const schema = await readFile(new URL("../db/schema.ts", import.meta.url), "utf8");
 const dbSource = await readFile(new URL("../db/index.ts", import.meta.url), "utf8");
 const conversationContext = await import(new URL("../server/conversation-context.mjs", import.meta.url));
@@ -63,7 +64,7 @@ test("persists consultation logs without a client-side retention cap", () => {
   assert.match(component, /historyOutboxKey/);
   assert.match(component, /keepalive: true/);
   assert.match(component, /相談履歴を再同期/);
-  assert.match(consultationApi, /ensureChatSessionStorage/);
+  assert.match(consultationApi, /ensureAppStorage/);
   assert.match(dbSource, /CREATE TABLE IF NOT EXISTS chat_sessions/);
   assert.match(dbSource, /d1\.batch/);
 });
@@ -210,6 +211,20 @@ test("inventory selection uses one matching question for every specialist", () =
   assert.doesNotMatch(component, /disabled=\{busy \|\| stage === "inventory"\}/);
   assert.match(component, /productSpecialistOf\(product\) === specialistId/);
   assert.doesNotMatch(component, /specialistId === "skin" && stage === "inventory"/);
+});
+
+test("creates every table the routes need before touching D1", () => {
+  // マイグレーションを適用する仕組みがデプロイ経路にないため、相談ログと同じく
+  // コンディション記録とアップロード台帳も実行時に用意する。これが無いと
+  // /api/check-ins と /api/uploads がテーブル不在で 503 になる。
+  for (const table of ["chat_sessions", "deleted_chat_sessions", "beauty_check_ins", "uploaded_assets"]) {
+    assert.match(dbSource, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`));
+  }
+  assert.match(checkInApi, /ensureAppStorage/);
+  assert.match(uploadApi, /ensureAppStorage/);
+  // 商品カタログは静的データが出典。D1へ書き写さない。
+  assert.doesNotMatch(productApi, /insert\(products\)/);
+  assert.match(productApi, /officialProducts\.map/);
 });
 
 test("saves optional beauty conditions and lets the owner delete them", () => {
