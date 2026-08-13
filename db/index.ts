@@ -2,7 +2,6 @@ import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./schema";
 
 let chatStorageReady: Promise<void> | null = null;
-let ownedItemStorageReady: Promise<void> | null = null;
 
 async function d1Binding() {
   const { env } = await import("cloudflare:workers");
@@ -49,30 +48,4 @@ export async function ensureChatSessionStorage() {
     });
   }
   await chatStorageReady;
-}
-
-export async function ensureOwnedItemStorage() {
-  if (!ownedItemStorageReady) {
-    ownedItemStorageReady = (async () => {
-      const d1 = await d1Binding();
-      await d1.batch([
-        d1.prepare(`CREATE TABLE IF NOT EXISTS owned_items (
-          owner_key text NOT NULL,
-          id text NOT NULL,
-          brand text DEFAULT '' NOT NULL,
-          name text NOT NULL,
-          category text NOT NULL,
-          note text,
-          created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
-          updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
-          PRIMARY KEY(owner_key, id)
-        )`),
-        d1.prepare("CREATE INDEX IF NOT EXISTS owned_items_owner_updated_idx ON owned_items (owner_key, updated_at)"),
-      ]);
-    })().catch((error) => {
-      ownedItemStorageReady = null;
-      throw error;
-    });
-  }
-  await ownedItemStorageReady;
 }

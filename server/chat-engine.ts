@@ -60,7 +60,8 @@ const specialistProfiles: Record<ProductSpecialistId, {
       { pattern: /広が|パサ|乾燥|まとま/, advice: "広がり中心なら、タオルでこすらず水分を取り、根元から乾かして毛先は最後に弱めの風で整えるところから変えてみてください。" },
       { pattern: /べたつ|皮脂|臭い/, advice: "頭皮のべたつきは洗浄力だけで決めず、予洗いを長めにしてシャンプーを頭皮へ残さないことを先に試す価値があります。" },
       { pattern: /ダメージ|カラー|ブリーチ|アイロン|うねり/, advice: "熱やカラーの負担が中心なら、毎日の洗浄を強くするより、毛先の集中ケアとアイロン温度の見直しを優先しましょう。" },
-      { pattern: /フケ|かゆみ|頭皮/, advice: "頭皮の乾燥感が中心なら、毛髪用トリートメントとは分けて、頭皮向けの洗浄・保湿を検討すると整理しやすいです。" },
+      { pattern: /頭皮.*快適/, advice: "頭皮の快適さを優先するなら、髪の仕上がりとは分けて、ベタつき・乾燥・かゆみのどれが近いかを先に確認します。" },
+      { pattern: /フケ|かゆみ|頭皮.*乾燥/, advice: "頭皮の違和感が中心なら、毛髪用トリートメントとは分けて、洗い方と頭皮向け保湿の必要性を確認します。" },
     ],
     defaultAdvice: ["髪・頭皮・スタイリングは原因が別なので、いちばん困る場面を一つ決めて、洗い方と乾かし方から順に変えます。"],
     questions: ["優先したいのは、朝のまとまり・手触り・頭皮の快適さのどれですか？", "カラーやアイロンを使う頻度はどのくらいですか？"],
@@ -90,6 +91,10 @@ const specialistProfiles: Record<ProductSpecialistId, {
       { pattern: /崩れ|テカ|皮脂|よれ/, advice: "崩れ対策は全部を厚くするより、下地を薄く均一にし、テカリやすい部分だけパウダーを重ねる方が直しやすいです。" },
       { pattern: /乾燥|割れ|粉/, advice: "乾燥崩れなら、ベースを薄くして保湿後の待ち時間を取り、パウダーを顔全体ではなく必要な部分だけに使ってみてください。" },
       { pattern: /リップ|色|血色|似合/, advice: "色選びは診断名で固定せず、普段の服・使う場面・欲しい印象の3点で候補を絞ると失敗しにくいです。" },
+      { pattern: /目元|アイメイク/, advice: "目元を変えるなら、アイシャドウ・ライン・マスカラのうち主役を一つに絞り、使う場面に合わせて濃さを決めます。" },
+      { pattern: /自然|ナチュラル/, advice: "自然な仕上がりなら、肌の質感を残しつつ、色を足す場所を一つに絞ると手持ちでも調整しやすいです。" },
+      { pattern: /ツヤ/, advice: "ツヤを出すなら顔全体を光らせず、頬の高い位置など一部に絞ると崩れも目立ちにくくなります。" },
+      { pattern: /きちんと/, advice: "きちんと感は厚塗りより、眉・肌の色むら・リップの輪郭を整える方が出しやすいです。" },
       { pattern: /ライブ|推し|イベント|写真/, advice: "イベント用なら、写真映えだけでなく色持ちと直しやすさを優先し、目元かリップのどちらかを主役にするとまとまります。" },
     ],
     defaultAdvice: ["ベース・目元・リップを一度に変えず、なりたい印象に最も影響する1か所だけを変えると手持ちも活かせます。"],
@@ -314,7 +319,7 @@ export function buildLocalReply(
     ? `まずは手持ちの「${ownedProducts.slice(0, 2).map((product) => `${product.brand} ${product.name}`).join("」「")}」を活かす形で組みましょう。`
     : "";
   const conditionSentence = conditionSummary && assessment.phase !== "listen"
-    ? `今日の記録（${conditionSummary}）もふまえ、無理に工程を増やさない方針が合いそうです。`
+    ? "今日のコンディションも参考に、工程は増やさず今のケアを微調整します。"
     : "";
   const contextQuestion = profile.contextQuestions[variationIndex(`${stage}:context:${input}`, history, profile.contextQuestions.length)];
   const preferenceQuestion = profile.preferenceQuestions[variationIndex(`${stage}:preference:${input}`, history, profile.preferenceQuestions.length)];
