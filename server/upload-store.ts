@@ -1,7 +1,6 @@
 import { and, eq } from "drizzle-orm";
-import { ensureAppStorage, getDb } from "@/db";
+import { getDb } from "@/db";
 import { uploadedAssets } from "@/db/schema";
-import { getPrivateImage } from "@/server/blob-store";
 import { requestOwner } from "@/server/request-owner";
 
 const idPattern = /^[0-9a-f-]{36}$/i;
@@ -18,7 +17,6 @@ function bytesToBase64(buffer: ArrayBuffer) {
 export async function ownedUploadDataUrl(request: Request, id: string) {
   if (!idPattern.test(id)) return null;
   const owner = await requestOwner(request);
-  await ensureAppStorage();
   const rows = await (await getDb()).select({
     objectKey: uploadedAssets.objectKey,
     contentType: uploadedAssets.contentType,
@@ -26,8 +24,8 @@ export async function ownedUploadDataUrl(request: Request, id: string) {
     .where(and(eq(uploadedAssets.ownerKey, owner.key), eq(uploadedAssets.id, id)))
     .limit(1);
   if (!rows[0]) return null;
-  const object = await getPrivateImage(rows[0].objectKey);
-  if (!object || object.statusCode !== 200) return null;
-  const buffer = await new Response(object.stream).arrayBuffer();
-  return `data:${rows[0].contentType};base64,${bytesToBase64(buffer)}`;
+  const { env } = await import("cloudflare:workers");
+  const object = await env.BUCKET?.get(rows[0].objectKey);
+  if (!object) return null;
+  return `data:${rows[0].contentType};base64,${bytesToBase64(await object.arrayBuffer())}`;
 }

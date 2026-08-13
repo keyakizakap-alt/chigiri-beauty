@@ -1,12 +1,12 @@
-import { assessConversation, buildLocalReply, hasSafetyConcern, isProposalRequestTurn, proposalAcknowledgement, rankOfficialProducts, suggestedRepliesForAssistant, type ConversationAssessment } from "./chat-engine";
-import { isDirectiveRequest } from "./conversation-context.mjs";
+import { assessConversation, buildLocalReply, isProposalRequestTurn, isSafetyEscalation, isUsageOnlyRequest, proposalAcknowledgement, rankOfficialProducts, removeRepeatedAssistantParagraphs, suggestedRepliesForAssistant } from "./chat-engine";
+import { isDirectiveRequest, reflectSpecialistConcern } from "./conversation-context.mjs";
 import { categoryLabels, type VerifiedProduct } from "../data/official-products";
 import { reviewEvidenceForProduct, type ProductReviewEvidence } from "./review-evidence";
 
 type ChatStage = "concern" | "skin" | "inventory" | "budget" | "complete";
 type SpecialistId = "skin" | "hair" | "body" | "makeup" | "nail";
 type ChatHistoryEntry = { role: "assistant" | "user"; text: string; images?: string[] };
-type ConversationMemory = { knownKeys?: string[]; askedKeys?: string[] };
+type ConversationMemory = { facts?: string[]; knownKeys?: string[]; askedKeys?: string[] };
 
 const specialistInstructions: Record<SpecialistId, string> = {
   skin: "あなたはARCA。スキンケア、紫外線対策、手持ち品の組み合わせ、朝夜ルーティンまで扱います。肌質を断定せず、使用感と起きるタイミングから提案します。",
@@ -23,6 +23,8 @@ const systemPrompt = `あなたはCHIGIRI Beautyの独立した美容コンシ�
 返答前に、内部で「背景をもう少し聞く」「手持ちや習慣を整理する」「提案へ進む」の3案を比較し、今の会話を最も前へ進める1つの返し方を選んでください。比較過程や内部推論は出力しません。
 - 毎回、共感句＋言い換え＋質問という同じ型にしない。
 - 直前2回のアシスタント発言と、冒頭表現・語尾・質問の形を重複させない。
+- 最新の返答が「分からない」「特にない」なら、その回答を不足扱いせず受け入れる。同じ説明や質問を繰り返さず、答えやすい別の観点を1つだけ聞く。
+- 直前のアシスタント発言に含まれる一文を、言い換えだけで冒頭に再掲しない。最新のユーザー発言へ直接返す。
 - ユーザーが具体的に聞いた場合は、まず答えてから必要なら質問する。
 - 最新の発言が「商品候補をお願い」「おすすめを教えて」「候補を見たい」などの依頼なら、好み・症状・仕上がりとして復唱しない。必要な条件がそろっていれば「分かりました。」と短く受けて、すぐ提案内容へ進む。条件が足りない場合も「分かりました。候補を絞るために、あと1点だけ確認します。」と受けてから質問する。この規則はスキンケア、ヘア、ボディ、メイク、ネイルの全担当で共通とする。
 - 会話内でユーザーが明示した部位・場面・症状・好み・予算・手持ちは、次の返答でも必ず前提として扱う。すでに答えた内容を質問し直さない。
@@ -84,40 +86,6 @@ function reviewContext(evidence: ProductReviewEvidence[]) {
   ).join("\n");
 }
 
-/**
- * 返却経路（初回・短答・APIキーなし・生成成功・障害時フォールバック）で
- * 同じ形の応答を返す。実際に質問した項目は askedContextKeys へ足し、
- * 次のターンで同じことを聞き直さないようにする。
- */
-function replyPayload(
-  text: string,
-  mode: string,
-  specialist: SpecialistId,
-  assessment: ConversationAssessment,
-  products: VerifiedProduct[],
-  reviews: ProductReviewEvidence[],
-) {
-  // 生成された返答は同じ意味でも言い回しが変わるため、質問文の完全一致だけで
-  // 判定すると「確認済み」を取りこぼし、次のターンで同じことを聞き直してしまう。
-  // 未確認の一点を渡したうえで質問文が含まれていれば、その項目は聞いたとみなす。
-  const askedThisTurn = Boolean(assessment.nextQuestionKey)
-    && (text.includes(assessment.nextQuestion) || /[？?]/.test(text));
-  const askedContextKeys = askedThisTurn
-    ? [...new Set([...assessment.askedContextKeys, assessment.nextQuestionKey])]
-    : assessment.askedContextKeys;
-  return {
-    text,
-    recommendedProducts: products,
-    recommendationReviews: reviews,
-    mode,
-    conversationPhase: assessment.phase,
-    suggestedReplies: suggestedRepliesForAssistant(specialist, text, assessment.phase),
-    conversationFacts: assessment.factSummary,
-    knownContextKeys: assessment.knownContextKeys,
-    askedContextKeys,
-  };
-}
-
 export async function createChatReply(
   stage: ChatStage,
   specialist: SpecialistId,
@@ -133,38 +101,69 @@ export async function createChatReply(
   const recommendedProducts = assessment.phase === "propose"
     ? rankOfficialProducts(specialist, input, history, 2, ownedProducts.map((product) => product.id))
     : [];
-  const safeProducts = hasSafetyConcern(input, history) ? [] : recommendedProducts;
+  const safeProducts = isSafetyEscalation(input) ? [] : recommendedProducts;
   const recommendationReviews = assessment.phase === "propose"
     ? await Promise.all(safeProducts.map((product) => reviewEvidenceForProduct(product)))
     : [];
   const apiKey = typeof process !== "undefined" ? process.env.ORCAROUTER_API_KEY : undefined;
-  const localReply = (mode: string) => replyPayload(
-    buildLocalReply(stage, input, specialist, history, safeProducts, ownedProducts, conditionSummary, memory, recommendationReviews),
-    mode,
-    specialist,
-    assessment,
-    safeProducts,
-    recommendationReviews,
-  );
-  if (assessment.phase === "safety") return localReply("guided-intake");
-
-  /**
-   * 定型応答へ落とすのは、選択肢をタップしたときのような情報量の少ない一言に限る。
-   * 以前は「50文字以下」かつ「悩みの語が入っている」だけで生成を通さずテンプレートを
-   * 返していたため、日本語のチャットではほとんどの発言が該当し、質問しても答えが
-   * 返らない・毎回同じ型の相づちが続く、といった噛み合わない返答になっていた。
-   */
-  const trimmedInput = input.trim();
-  const shortChoiceAnswer = trimmedInput.length <= 24
-    && !/[？?]/.test(trimmedInput)
-    && !images.length
-    && !isDirectiveRequest(input)
-    && Boolean(assessment.lastAnsweredContextKey)
-    && assessment.phase !== "propose";
+  if (assessment.phase === "listen" || assessment.phase === "safety") {
+    const text = buildLocalReply(stage, input, specialist, history, safeProducts, ownedProducts, conditionSummary, memory, recommendationReviews);
+    return {
+      text,
+      recommendedProducts: safeProducts,
+      recommendationReviews,
+      mode: "guided-intake",
+      conversationPhase: assessment.phase,
+      suggestedReplies: suggestedRepliesForAssistant(specialist, text, assessment.phase),
+      conversationFacts: assessment.factSummary,
+      knownContextKeys: assessment.knownContextKeys,
+      askedContextKeys: assessment.askedContextKeys,
+    };
+  }
+  if (isUsageOnlyRequest(input)) {
+    const text = buildLocalReply(stage, input, specialist, history, safeProducts, ownedProducts, conditionSummary, memory, recommendationReviews);
+    return {
+      text,
+      recommendedProducts: [],
+      recommendationReviews: [],
+      mode: "guided-coaching",
+      conversationPhase: assessment.phase,
+      suggestedReplies: suggestedRepliesForAssistant(specialist, text, assessment.phase),
+      conversationFacts: assessment.factSummary,
+      knownContextKeys: assessment.knownContextKeys,
+      askedContextKeys: assessment.askedContextKeys,
+    };
+  }
+  const groundedShortAnswer = reflectSpecialistConcern(specialist, input, assessment.lastAnsweredContextKey);
+  const controlledShortAnswer = input.trim().length <= 50 && !isDirectiveRequest(input)
+    && (Boolean(assessment.lastAnsweredContextKey) || Boolean(groundedShortAnswer));
+  if (controlledShortAnswer) {
+    const text = buildLocalReply(stage, input, specialist, history, safeProducts, ownedProducts, conditionSummary, memory, recommendationReviews);
+    return {
+      text,
+      recommendedProducts: safeProducts,
+      recommendationReviews,
+      mode: "guided-selection",
+      conversationPhase: assessment.phase,
+      suggestedReplies: suggestedRepliesForAssistant(specialist, text, assessment.phase),
+      conversationFacts: assessment.factSummary,
+      knownContextKeys: assessment.knownContextKeys,
+      askedContextKeys: assessment.askedContextKeys,
+    };
+  }
   if (!apiKey) {
-    if (assessment.phase === "listen") return localReply("guided-intake");
-    if (shortChoiceAnswer) return localReply("guided-selection");
-    return localReply("local-fallback");
+    const text = buildLocalReply(stage, input, specialist, history, safeProducts, ownedProducts, conditionSummary, memory, recommendationReviews);
+    return {
+      text,
+      recommendedProducts: safeProducts,
+      recommendationReviews,
+      mode: "local-fallback",
+      conversationPhase: assessment.phase,
+      suggestedReplies: suggestedRepliesForAssistant(specialist, text, assessment.phase),
+      conversationFacts: assessment.factSummary,
+      knownContextKeys: assessment.knownContextKeys,
+      askedContextKeys: assessment.askedContextKeys,
+    };
   }
 
   try {
@@ -192,18 +191,37 @@ export async function createChatReply(
     const generatedText = payload.choices?.[0]?.message?.content?.trim();
     if (!generatedText) throw new Error("empty response");
     const awkwardRequestReflection = /^(仕上がり|好み|いちばん大事|優先したい|気になるのは).{0,80}(商品|製品|アイテム|候補|おすすめ).{0,30}(なんですね|ですね)[。\s]*/;
-    const cleanedText = proposalRequestedThisTurn
+    const cleanedText = removeRepeatedAssistantParagraphs(proposalRequestedThisTurn
       ? generatedText.replace(awkwardRequestReflection, "").trim()
-      : generatedText;
+      : generatedText, history);
     const acknowledgement = proposalAcknowledgement(specialist, assessment.phase === "propose");
-    const text = proposalRequestedThisTurn && !/^(分かりました|承知|了解|かしこまり)/.test(cleanedText)
+    const text = proposalRequestedThisTurn && !/^(分かりました|承知しました)/.test(cleanedText)
       ? `${acknowledgement}\n\n${cleanedText}`
       : cleanedText;
     return {
-      ...replyPayload(text, "orcarouter", specialist, assessment, safeProducts, recommendationReviews),
+      text,
+      recommendedProducts: safeProducts,
+      recommendationReviews,
+      mode: "orcarouter",
+      conversationPhase: assessment.phase,
+      suggestedReplies: suggestedRepliesForAssistant(specialist, text, assessment.phase),
+      conversationFacts: assessment.factSummary,
+      knownContextKeys: assessment.knownContextKeys,
+      askedContextKeys: assessment.askedContextKeys,
       resolvedModel: response.headers.get("x-orca-resolved-model"),
     };
   } catch {
-    return localReply("local-fallback");
+    const text = buildLocalReply(stage, input, specialist, history, safeProducts, ownedProducts, conditionSummary, memory, recommendationReviews);
+    return {
+      text,
+      recommendedProducts: safeProducts,
+      recommendationReviews,
+      mode: "local-fallback",
+      conversationPhase: assessment.phase,
+      suggestedReplies: suggestedRepliesForAssistant(specialist, text, assessment.phase),
+      conversationFacts: assessment.factSummary,
+      knownContextKeys: assessment.knownContextKeys,
+      askedContextKeys: assessment.askedContextKeys,
+    };
   }
 }

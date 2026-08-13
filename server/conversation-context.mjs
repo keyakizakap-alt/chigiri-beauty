@@ -84,18 +84,8 @@ export function isDirectiveRequest(input) {
   return /^(お願い|お願いします|それでお願い|それでお願いします|見たい|それを見たい)[。！!？?]*$/.test(source)
     || /(商品|製品|アイテム|コスメ|ケア用品).{0,16}(候補|提案|おすすめ|選ん|教えて|見たい|出して|お願い)/.test(source)
     || /(候補|おすすめ).{0,12}(お願い|提案|教えて|見たい|出して|選ん)/.test(source)
-    || /(使い方|手順|方法).{0,12}(お願い|教えて|知りたい|見たい)/.test(source);
-}
-
-/**
- * 手持ちアイテムの申告は、直前の質問への回答ではない。ピッカーから送られる
- * 「手持ちは「A」「B」です。」を、タイミングや好みの答えとして記録してしまうと、
- * 以降の提案が商品名を条件として扱ってしまう。
- */
-export function isOwnedItemsDeclaration(input) {
-  const source = normalize(input).trim();
-  return /^手持ちは.+です[。\s]*$/.test(source)
-    || /^手持ちはまだ登録していません[。\s]*$/.test(source);
+    || /(使い方|手順|方法).{0,12}(お願い|教えて|知りたい|見たい|整え|見直)/.test(source)
+    || /^(まず)?(手持ち|今あるもの).{0,12}(だけ|中心).{0,12}(考え|使|組|見直)/.test(source);
 }
 
 function addFact(facts, source, pattern, text) {
@@ -210,20 +200,6 @@ function plainAnswer(input) {
   return input.trim().replace(/[。！？!?]+$/g, "").replace(/\s+/g, " ").slice(0, 60);
 }
 
-/**
- * そのまま鉤括弧で復唱すると不自然になる発話。相づち・保留・質問・依頼を
- * 「いちばん気になるのは「はい」なんですね。」のように読み上げてしまうと、
- * 相談内容と噛み合っていない返答に見える。
- */
-function isQuotableAnswer(rawInput, answer) {
-  if (!answer || answer.length > 40) return false;
-  // 疑問文は「回答」ではない。質問をそのまま復唱すると会話が噛み合わなくなる。
-  if (/[？?]/.test(rawInput) || /(ですか|ますか|でしょうか|かな)$/.test(answer)) return false;
-  return !/^(はい|うん|ええ|そう|そうです|そうですね|なるほど|ok|ｏｋ|おけ|了解|わかった|分かった|ありがとう|ありがとうございます|よろしく|よろしくお願いします|お願い|お願いします|大丈夫|特にない|特になし|わからない|分からない|不明|どちらでも|なんでも|何でも)/.test(
-    normalize(answer),
-  );
-}
-
 function firstMatch(source, choices) {
   return choices.find(([pattern]) => pattern.test(source))?.[1] ?? "";
 }
@@ -242,6 +218,20 @@ export function reflectSpecialistConcern(specialist, input, lastAnsweredKey = ""
 
   const source = normalize(input);
   const answer = plainAnswer(input);
+  const unknownAnswer = /^(わからない|分からない|不明|まだ決めていない|特にない|答えたくない)/.test(source);
+
+  if (lastAnsweredKey && unknownAnswer) {
+    const unknownResponses = {
+      skin: "今は分からなくても大丈夫です。実際に気になる場面から順に見ていきます。",
+      hair: "今は分からなくても大丈夫です。髪と頭皮のうち、気づきやすい方から確認できます。",
+      body: "はっきり決めなくても大丈夫です。普段いちばん気になりやすい場面から絞れます。",
+      makeup: lastAnsweredKey === "personalColor"
+        ? "分からなくて大丈夫です。パーソナルカラーは決めつけず、普段の服や使う場面、なりたい印象から色を絞ります。"
+        : "まだ決まっていなくても大丈夫です。使う場面や、変えたいところから一緒に絞れます。",
+      nail: "今は分からなくても大丈夫です。日中と夜のどちらなら続けやすいかから考えられます。",
+    };
+    return unknownResponses[specialist] ?? "分からなくても大丈夫です。答えやすいところから確認します。";
+  }
 
   if (specialist === "hair") {
     const concern = firstMatch(source, [
@@ -291,7 +281,7 @@ export function reflectSpecialistConcern(specialist, input, lastAnsweredKey = ""
     if (concern) return `${exposure}${concern}が気になるんですね。`;
   }
 
-  if (lastAnsweredKey && isQuotableAnswer(input, answer)) {
+  if (lastAnsweredKey && answer) {
     const shortAnswerTemplates = {
       skin: {
         concern: `いちばん気になるのは「${answer}」なんですね。`,
@@ -418,7 +408,7 @@ function inferredAnswerFact(specialist, key, input) {
  * @param {SpecialistId} specialist
  * @param {string} input
  * @param {Array<{role: "assistant" | "user", text: string}>} history
- * @param {{knownKeys?: string[], askedKeys?: string[]}} memory
+ * @param {{facts?: string[], knownKeys?: string[], askedKeys?: string[]}} memory
  */
 export function deriveConversationContext(specialist, input, history = [], memory = {}) {
   const userTexts = history.filter((entry) => entry.role === "user").map((entry) => entry.text);
@@ -429,11 +419,7 @@ export function deriveConversationContext(specialist, input, history = [], memor
     ...(Array.isArray(memory.knownKeys) ? memory.knownKeys.filter((key) => allowedKeys.has(key)).slice(0, 12) : []),
     ...matched.map((item) => item.key),
   ]);
-  // 利用者からの質問は、直前の質問への回答ではない。回答として記録すると、
-  // 確認済みの条件に質問文が混ざり、以降の返答が相談内容とずれていく。
-  const lastAnsweredKey = isDirectiveRequest(input) || isOwnedItemsDeclaration(input) || /[？?]\s*$/.test(input.trim())
-    ? ""
-    : latestAssistantQuestionKey(specialist, history);
+  const lastAnsweredKey = isDirectiveRequest(input) ? "" : latestAssistantQuestionKey(specialist, history);
   const answerFact = inferredAnswerFact(specialist, lastAnsweredKey, input);
   if (lastAnsweredKey && input.trim()) knownKeys.add(lastAnsweredKey);
   const askedKeys = new Set([
@@ -462,21 +448,17 @@ export function deriveConversationContext(specialist, input, history = [], memor
     nail: knownKeys.has("area") && knownKeys.has("concern") && (knownKeys.has("exposure") || knownKeys.has("preference")),
   };
 
-  // facts はクライアントから受け取らず、毎回サーバー側で会話から導出する。
-  // 送り返された文字列をそのままシステムプロンプトへ載せると、任意の指示を
-  // 注入できてしまうため。
+  const previousFacts = Array.isArray(memory.facts)
+    ? memory.facts.filter((fact) => typeof fact === "string" && fact.trim()).map((fact) => fact.trim().slice(0, 120)).slice(0, 20)
+    : [];
   const currentFacts = [...describeKnownFacts(specialist, conversation, matched.map((item) => item.fact)), ...(answerFact ? [answerFact] : [])];
 
   return {
     knownKeys: [...knownKeys],
     askedKeys: [...askedKeys],
-    facts: [...new Set(currentFacts)].slice(-20),
+    facts: [...new Set([...previousFacts, ...currentFacts])].slice(-20),
     enoughContext: enoughBySpecialist[specialist],
     nextQuestion: next?.[1] ?? "",
-    // 質問文の正規表現による逆引きだけに頼ると、言い回し次第で「質問済み」を
-    // 取りこぼして同じことを聞き直してしまう。実際に質問した場合は呼び出し側が
-    // このキーを askedKeys へ足す。
-    nextQuestionKey: next?.[0] ?? "",
     lastAnsweredKey,
   };
 }

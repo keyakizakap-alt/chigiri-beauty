@@ -12,7 +12,6 @@ import {
   type VerifiedProduct,
 } from "@/data/official-products";
 import { productDifference, productInsight } from "@/data/product-insights";
-import { budgetFromText } from "@/server/budget.mjs";
 import type { ProductReviewEvidence, ReviewLinks } from "@/server/review-evidence";
 
 type Stage = "concern" | "skin" | "inventory" | "budget" | "complete";
@@ -110,8 +109,6 @@ type ChigiriAppProps = {
   viewer: Viewer | null;
   signInPath: string;
   signOutPath: string;
-  /** Googleログインの設定が揃っているか。未設定のまま導線だけ出すと押しても失敗する。 */
-  signInAvailable?: boolean;
 };
 
 type ComparedPlan = ChigiriPlan & {
@@ -143,8 +140,8 @@ const shoppingStyles: ShoppingStyle[] = [
 
 const specialists: Array<{ id: SpecialistId; name: string; role: string; icon: string; greeting: string; quickReplies: string[] }> = [
   { id: "skin", name: "ARCA", role: "スキンケア", icon: "A", greeting: "ARCAです。肌のことで、今いちばん気になっていることは何ですか？ 小さな違和感でも大丈夫です。", quickReplies: ["乾燥が気になる", "毛穴やキメが気になる", "日によって肌がゆらぐ", "何を使えばいいか分からない"] },
-  { id: "hair", name: "SILQA", role: "ヘア・頭皮ケア", icon: "Si", greeting: "SILQAです。髪の広がりやダメージ、頭皮のことまで相談できます。今日はどこから話しますか？", quickReplies: ["髪の乾燥・広がり", "頭皮のべたつき", "ダメージが気になる", "自分に合うケアが不明"] },
-  { id: "body", name: "SOMA", role: "ボディケア", icon: "So", greeting: "SOMAです。乾燥やざらつき、UV対策まで相談できます。今日はどの悩みから話しますか？", quickReplies: ["全身の乾燥", "ひじ・ひざのざらつき", "ボディのUV対策", "ケアを習慣化したい"] },
+  { id: "hair", name: "SILQA", role: "ヘア・頭皮ケア", icon: "S", greeting: "SILQAです。髪の広がりやダメージ、頭皮のことまで相談できます。今日はどこから話しますか？", quickReplies: ["髪の乾燥・広がり", "頭皮のべたつき", "ダメージが気になる", "自分に合うケアが不明"] },
+  { id: "body", name: "SOMA", role: "ボディケア", icon: "S", greeting: "SOMAです。乾燥やざらつき、UV対策まで相談できます。今日はどの悩みから話しますか？", quickReplies: ["全身の乾燥", "ひじ・ひざのざらつき", "ボディのUV対策", "ケアを習慣化したい"] },
   { id: "makeup", name: "TINTA", role: "メイク・コスメ", icon: "T", greeting: "TINTAです。普段のメイクでも、ライブやお出かけ用でも大丈夫です。今日は何について相談しますか？", quickReplies: ["似合う色を知りたい", "崩れにくくしたい", "手持ちでメイクしたい", "場面別に提案してほしい"] },
   { id: "nail", name: "UNEA", role: "ネイル・ハンド", icon: "U", greeting: "UNEAです。爪の乾燥、手荒れ、セルフネイルのことまで相談できます。今いちばん困っているのはどれですか？", quickReplies: ["爪が乾燥しやすい", "手荒れが気になる", "セルフネイル相談", "簡単なケアを知りたい"] },
 ];
@@ -313,24 +310,6 @@ function removeCachedSession(key: string, id: string) {
   storeSessions(key, storedSessions(key).filter((session) => session.id !== id));
 }
 
-/**
- * 相談ログは全担当まとめて取得する。表示は必要に応じて絞り込むだけなので、
- * 担当別に5系統投げる必要はなく、1本でも失敗すると履歴が丸ごと空に見える
- * 事故も防げる。
- */
-async function fetchAllHistory() {
-  const all: ChatSession[] = [];
-  let cursor: string | null = "0";
-  while (cursor !== null) {
-    const response: Response = await fetch(`/api/consultations?cursor=${encodeURIComponent(cursor)}`, { credentials: "same-origin" });
-    if (!response.ok) throw new Error("history load failed");
-    const data: { sessions?: ChatSession[]; nextCursor?: string | null } = await response.json();
-    all.push(...(data.sessions ?? []));
-    cursor = data.nextCursor ?? null;
-  }
-  return all.filter((session) => session?.id && session.messages?.length);
-}
-
 async function syncSessionBatch(sessions: ChatSession[]) {
   for (let offset = 0; offset < sessions.length; offset += 50) {
     const response = await fetch("/api/consultations", {
@@ -342,16 +321,6 @@ async function syncSessionBatch(sessions: ChatSession[]) {
     if (!response.ok) throw new Error("history sync failed");
   }
 }
-/**
- * 履歴の見出し。24文字で切ると多くの相談が途中で切れて内容を判別できないため、
- * サーバー側の上限（80文字）に収まる範囲で長めに残し、切った場合だけ「…」を付ける。
- */
-function sessionTitleFrom(text: string | undefined) {
-  const source = text?.replace(/\s+/g, " ").trim();
-  if (!source) return "新しい美容相談";
-  return source.length > 48 ? `${source.slice(0, 48)}…` : source;
-}
-
 function initialMessageFor(specialistId: SpecialistId): Message {
   const specialist = specialists.find((item) => item.id === specialistId) ?? specialists[0];
   return { id: Date.now(), role: "assistant", text: specialist.greeting, time: "いま" };
@@ -369,15 +338,6 @@ const stageOrder: Record<Stage, Stage> = {
 
 function now() {
   return new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit" }).format(new Date());
-}
-
-function nowMs() {
-  return Date.now();
-}
-
-// 返答までの最短時間。応答が届いてからの上乗せではなく、送信からの総待ち時間の下限。
-function replyPauseMs() {
-  return 650 + Math.random() * 520;
 }
 
 function createSessionId() {
@@ -419,7 +379,9 @@ function purchaseDestination(product: VerifiedProduct) {
 }
 
 function parseBudget(text: string) {
-  return budgetFromText(text, 3000);
+  if (text.includes("買いたくない") || text.includes("0円")) return 0;
+  const match = text.replace(/,/g, "").match(/(\d{3,5})/);
+  return match ? Number(match[1]) : 3000;
 }
 
 function marketOf(product: VerifiedProduct): ProductMarket {
@@ -497,7 +459,7 @@ function careHint(specialistId: SpecialistId, condition?: ConditionEntry | null)
   return "大きく変えず、今日の使い心地を覚えておくと、次回の相談で調整しやすくなります。";
 }
 
-export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvailable = true }: ChigiriAppProps) {
+export default function ChigiriApp({ viewer, signInPath, signOutPath }: ChigiriAppProps) {
   const [splashVisible, setSplashVisible] = useState(true);
   const [stage, setStage] = useState<Stage>("concern");
   const [input, setInput] = useState("");
@@ -513,12 +475,8 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
   const [activeSessionId, setActiveSessionId] = useState("");
   const [historyReady, setHistoryReady] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-
+  const [historyCursors, setHistoryCursors] = useState<Partial<Record<SpecialistId, string | null>>>({});
   const [historySyncState, setHistorySyncState] = useState<"loading" | "saved" | "saving" | "error">("loading");
-  // 「保存できていない」と「読み込めなかった」は別の状態。混ぜると、サーバーには
-  // 履歴があるのに「この端末には保持しています」と案内してしまう。
-  const [historyLoadFailed, setHistoryLoadFailed] = useState(false);
-  const [historyLoading, setHistoryLoading] = useState(false);
   const [deletingSessionId, setDeletingSessionId] = useState("");
   const [specialistId, setSpecialistId] = useState<SpecialistId>("skin");
   const [productQuery, setProductQuery] = useState("");
@@ -545,29 +503,10 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
   const imageInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const saveRevisionRef = useRef(0);
+  const backgroundedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSplashVisible(false), 1100);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  // ログインに失敗したときは、コールバックが `?login=` を付けて戻してくる。
-  // 何も出さないと「押しても何も起きない」ように見えるため、理由を短く伝える。
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const result = params.get("login");
-    if (!result) return;
-    const messages: Record<string, string> = {
-      cancelled: "Googleログインをキャンセルしました。",
-      expired: "ログインの有効期限が切れました。もう一度お試しください。",
-      failed: "Googleログインを完了できませんでした。時間をおいてもう一度お試しください。",
-      unverified: "メールアドレスの確認が済んでいないGoogleアカウントではログインできません。",
-      unavailable: "現在この環境ではGoogleログインを利用できません。",
-    };
-    const timer = window.setTimeout(() => setServiceNotice(messages[result] ?? "ログインを完了できませんでした。"), 0);
-    params.delete("login");
-    const query = params.toString();
-    window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -589,25 +528,14 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
     return () => controller.abort();
   }, [detailProductId]);
 
-  // 重ねて開くパネルはどれも Escape で閉じられるようにする。商品詳細だけが
-  // 対応していると、他のパネルは×ボタンを探すまで閉じられない。
-  // 手前に開いているものから1枚ずつ閉じる。
   useEffect(() => {
-    const layers: Array<[boolean, () => void]> = [
-      [Boolean(detailProductId), () => setDetailProductId(null)],
-      [planOpen, () => setPlanOpen(false)],
-      [conditionOpen, () => setConditionOpen(false)],
-      [shelfOpen, () => setShelfOpen(false)],
-      [historyOpen, () => setHistoryOpen(false)],
-    ];
-    const topmost = layers.find(([open]) => open);
-    if (!topmost) return;
+    if (!detailProductId) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") topmost[1]();
+      if (event.key === "Escape") setDetailProductId(null);
     };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [conditionOpen, detailProductId, historyOpen, planOpen, shelfOpen]);
+  }, [detailProductId]);
 
   useEffect(() => {
     if (!historyReady) return;
@@ -622,22 +550,17 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
       void (async () => {
         const cached = mergeSessions(storedSessions(historyCacheKey), storedSessions(historyOutboxKey));
         if (cached.length) setSessions(cached);
-        // アカウント移行は独立させる。ここで失敗しても履歴の読み込みは続ける。
-        if (viewer) {
-          try {
+        try {
+          if (viewer) {
             const migration = await fetch("/api/account/migrate", {
               method: "POST",
               credentials: "same-origin",
             });
             if (!migration.ok) setServiceNotice("端末内の過去ログは移行できませんでしたが、新しい相談はアカウントに保存されます。");
-          } catch {
-            setServiceNotice("端末内の過去ログは移行できませんでしたが、新しい相談はアカウントに保存されます。");
           }
-        }
-        {
+          const pending = storedSessions(historyOutboxKey);
           const currentSource = localStorage.getItem(chatStorageKey);
           let migratable: ChatSession[] = [];
-          try {
           if (currentSource) {
             const stored = JSON.parse(currentSource) as Array<Omit<ChatSession, "specialistId"> & { specialistId?: SpecialistId }>;
             migratable = stored.filter((session) => session.id && session.messages?.length).map((session) => {
@@ -651,39 +574,36 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
             }
           }
 
-          } catch {
-            // 旧データの移行に失敗しても、読み込みは続ける。
-            migratable = [];
+          const loadFor = async (specialist: (typeof specialists)[number]) => {
+            const response = await fetch(`/api/consultations?specialist=${specialist.id}`, { credentials: "same-origin" });
+            if (!response.ok) throw new Error("history load failed");
+            const data = await response.json() as { sessions?: ChatSession[]; nextCursor?: string | null };
+            return { specialistId: specialist.id, sessions: data.sessions ?? [], nextCursor: data.nextCursor ?? null };
+          };
+          // The first request establishes the anonymous HttpOnly owner cookie when
+          // The first anonymous request establishes a private owner cookie. Later
+          // requests can share it, and Google login migrates it to the account.
+          const firstLoaded = await loadFor(specialists[0]);
+          const loaded = [firstLoaded, ...(await Promise.all(specialists.slice(1).map(loadFor)))];
+          const valid = loaded.flatMap((group) => group.sessions).filter((session) => session.id && session.messages?.length);
+          const combined = mergeSessions(valid, cached, migratable);
+          setHistoryCursors(Object.fromEntries(loaded.map((group) => [group.specialistId, group.nextCursor])));
+          setSessions(combined);
+          storeSessions(historyCacheKey, combined);
+          const queued = mergeSessions(pending, migratable);
+          if (queued.length) {
+            await syncSessionBatch(queued);
+            storeSessions(historyOutboxKey, []);
           }
-
-          setHistoryLoading(true);
-          try {
-            const combined = mergeSessions(await fetchAllHistory(), cached, migratable);
-            setSessions(combined);
-            storeSessions(historyCacheKey, combined);
-            setHistoryLoadFailed(false);
-          } catch {
-            // 読み込みに失敗しても、この端末に残っている分は表示したままにする。
-            setHistoryLoadFailed(true);
-          } finally {
-            setHistoryLoading(false);
-          }
-
-          // 未送信分の再送。読み込みとは独立させ、片方の失敗がもう片方を巻き込まないようにする。
-          try {
-            const queued = mergeSessions(storedSessions(historyOutboxKey), migratable);
-            if (queued.length) {
-              await syncSessionBatch(queued);
-              storeSessions(historyOutboxKey, []);
-            }
-            if (currentSource) localStorage.removeItem(chatStorageKey);
-            setHistorySyncState("saved");
-          } catch {
-            setHistorySyncState("error");
-          }
+          if (currentSource) localStorage.removeItem(chatStorageKey);
           // Keep past consultations available, but always open on a fresh chat.
           // A previous conversation resumes only when the user selects it.
           setActiveSessionId(createSessionId());
+          setHistorySyncState("saved");
+        } catch {
+          setActiveSessionId(createSessionId());
+          setHistorySyncState("error");
+        } finally {
           setHistoryReady(true);
         }
       })();
@@ -696,7 +616,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
     const firstUserMessage = messages.find((message) => message.role === "user")?.text;
     const current: ChatSession = {
       id: activeSessionId,
-      title: sessionTitleFrom(firstUserMessage),
+      title: firstUserMessage?.slice(0, 24) || "新しい美容相談",
       updatedAt: new Date().toISOString(),
       messages,
       stage,
@@ -761,13 +681,13 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
     [specialistId, visibleProducts]
   );
 
-  // プランはスキンケアの結果カードでしか使わない。他の担当では 100 通りの
-  // 組み合わせを毎メッセージ作り直すだけになるので、計算自体を行わない。
+  const plans = useMemo(
+    () => createPlans(products, selectedProducts, budget, messages),
+    [budget, messages, products, selectedProducts]
+  );
   const result = useMemo(
-    () => specialistId === "skin"
-      ? selectBestFromTopThree(createPlans(products, selectedProducts, budget, messages), selectedProducts.length, budget)
-      : null,
-    [budget, messages, products, selectedProducts, specialistId]
+    () => selectBestFromTopThree(plans, selectedProducts.length, budget),
+    [budget, plans, selectedProducts.length]
   );
   const activeSpecialist = specialists.find((item) => item.id === specialistId) ?? specialists[0];
   const visibleSessions = useMemo(
@@ -848,8 +768,14 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
     setMessages((current) => [...current, { id: Date.now(), role: "user", text: visibleText, time: now(), images: imagesToSend }]);
     setBusy(true);
     if (stage === "budget" && value) setBudget(parseBudget(value));
+    const continuesUsageOnly = stage === "inventory" && messages
+      .filter((message) => message.role === "user")
+      .slice(-3)
+      .some((message) => /(使い方.{0,8}(整え|見直)|手持ち(だけ|中心))/.test(message.text));
+    const requestText = continuesUsageOnly
+      ? `${visibleText}。商品は増やさず、使い方だけ見直したいです。`
+      : visibleText;
 
-    const requestStartedAt = nowMs();
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -857,12 +783,13 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
         body: JSON.stringify({
           stage,
           specialist: specialistId,
-          input: visibleText,
+          input: requestText,
           images: imagesToSend.map((image) => image.url),
           ownedProductIds: selectedIds,
           conditions: conversationConditions,
-          history: messages.map(({ role, text }) => ({ role, text })).slice(-60),
+          history: messages.map(({ role, text }) => ({ role, text })).slice(-20),
           memory: {
+            facts: conversationFacts,
             knownKeys: knownContextKeys,
             askedKeys: askedContextKeys,
           },
@@ -870,9 +797,11 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
       });
       const data = (await response.json()) as { text?: string; recommendedProducts?: VerifiedProduct[]; recommendationReviews?: ProductReviewEvidence[]; conversationPhase?: ConversationPhase; suggestedReplies?: string[]; conversationFacts?: string[]; knownContextKeys?: string[]; askedContextKeys?: string[]; mode?: string };
       const userTurnCount = messages.filter((message) => message.role === "user").length + 1;
+      const isUnknownAnswer = /^(わからない|分からない|不明|特にない|まだ決めていない)$/.test(value);
       const shouldEnterInventory = stage === "concern"
         && selectedIds.length === 0
         && userTurnCount >= 2
+        && !isUnknownAnswer
         && ["align", "propose"].includes(data.conversationPhase ?? "understand");
       const nextStage: Stage = shouldEnterInventory
         ? "inventory"
@@ -883,14 +812,11 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
             : specialistId === "skin" && stage !== "budget" && stage !== "complete"
               ? stageOrder[stage]
               : stage;
-      // 手持ち確認へ進むときも、生成された返答は差し替えない。手持ちを聞く文言は
-      // ピッカーの見出し（inventoryPrompts）が担当し、質問が二重に並ばないようにする。
-      const assistantText = data.text ?? "うまくお返事をまとめられませんでした。少し言い換えて、もう一度送ってもらえますか？";
+      const assistantText = nextStage === "inventory"
+        ? inventoryPrompts[specialistId]
+        : data.text ?? "うまくお返事をまとめられませんでした。少し言い換えて、もう一度送ってもらえますか？";
       setServiceNotice(data.mode === "local-fallback" ? "今は基本のケア案内でお返ししています。詳しいパーソナル提案は、少し時間をおいてお試しください。" : "");
-      // 応答が届いてからの固定待ちは、APIがすでに使った時間への上乗せになる。
-      // 送信からの経過を差し引き、足りない分だけ待つ。
-      const remainingPause = replyPauseMs() - (nowMs() - requestStartedAt);
-      if (remainingPause > 0) await new Promise((resolve) => setTimeout(resolve, remainingPause));
+      await new Promise((resolve) => setTimeout(resolve, 650 + Math.random() * 520));
       setMessages((current) => [
         ...current,
         {
@@ -898,12 +824,12 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
           role: "assistant",
           text: assistantText,
           time: now(),
-          recommendedProducts: data.recommendedProducts?.slice(0, 2),
-          recommendationReviews: data.recommendationReviews?.slice(0, 2),
+          recommendedProducts: nextStage === "inventory" ? undefined : data.recommendedProducts?.slice(0, 2),
+          recommendationReviews: nextStage === "inventory" ? undefined : data.recommendationReviews?.slice(0, 2),
         },
       ]);
       setConversationPhase(data.conversationPhase ?? "understand");
-      setSuggestedReplies(data.suggestedReplies?.slice(0, 3) ?? []);
+      setSuggestedReplies(nextStage === "inventory" ? [] : data.suggestedReplies?.slice(0, 3) ?? []);
       setConversationFacts(data.conversationFacts?.slice(0, 20) ?? conversationFacts);
       setKnownContextKeys(data.knownContextKeys?.slice(0, 12) ?? knownContextKeys);
       setAskedContextKeys(data.askedContextKeys?.slice(0, 12) ?? askedContextKeys);
@@ -1033,9 +959,8 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
 
   function finishInventory() {
     if (!selectedIds.length || busy) return;
-    // 「手持ちは〜です。」の形にして、直前の質問への回答として記録されないようにする。
-    const summary = selectedProducts.map((product) => `「${product.brand} ${product.name}」`).join("");
-    void send(`手持ちは${summary}です。`);
+    const summary = selectedProducts.map((product) => `${product.brand} ${product.name}`).join("、");
+    void send(summary);
   }
 
   function toggleProduct(id: string) {
@@ -1083,7 +1008,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
     const firstUserMessage = messages.find((message) => message.role === "user")?.text;
     const currentSnapshot: ChatSession = {
       id: activeSessionId,
-      title: sessionTitleFrom(firstUserMessage),
+      title: firstUserMessage?.slice(0, 24) || "新しい美容相談",
       updatedAt: new Date().toISOString(),
       messages,
       stage,
@@ -1116,22 +1041,50 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
     setServiceNotice("");
   }
 
-  /** 読み込みの再試行。未送信分の再送（retryHistorySync）とは別物。 */
-  async function reloadHistory() {
-    if (historyLoading) return;
-    setHistoryLoading(true);
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        backgroundedAtRef.current = Date.now();
+        return;
+      }
+      const backgroundedAt = backgroundedAtRef.current;
+      backgroundedAtRef.current = null;
+      if (backgroundedAt && Date.now() - backgroundedAt >= 30_000 && !busy && messages.some((message) => message.role === "user")) {
+        setActiveSessionId(createSessionId());
+        setMessages([initialMessageFor(specialistId)]);
+        setStage("concern");
+        setSelectedIds([]);
+        setBudget(3000);
+        setConversationPhase("listen");
+        setSuggestedReplies(specialists.find((item) => item.id === specialistId)?.quickReplies ?? []);
+        setConversationFacts([]);
+        setKnownContextKeys([]);
+        setAskedContextKeys([]);
+        setServiceNotice("");
+        setPendingImages([]);
+        setInput("");
+        setHistoryOpen(false);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [busy, messages, specialistId]);
+
+  async function loadMoreHistory() {
+    const cursor = historyCursors[specialistId];
+    if (!cursor) return;
     try {
-      const loaded = await fetchAllHistory();
+      const response = await fetch(`/api/consultations?specialist=${specialistId}&cursor=${encodeURIComponent(cursor)}`, { credentials: "same-origin" });
+      if (!response.ok) throw new Error("history load failed");
+      const data = await response.json() as { sessions?: ChatSession[]; nextCursor?: string | null };
       setSessions((current) => {
-        const next = mergeSessions(loaded, current);
+        const next = mergeSessions(current, data.sessions ?? []);
         storeSessions(historyCacheKey, next);
         return next;
       });
-      setHistoryLoadFailed(false);
+      setHistoryCursors((current) => ({ ...current, [specialistId]: data.nextCursor ?? null }));
     } catch {
-      setHistoryLoadFailed(true);
-    } finally {
-      setHistoryLoading(false);
+      window.alert("過去の相談ログを読み込めませんでした。通信状態を確認して、もう一度お試しください。");
     }
   }
 
@@ -1240,31 +1193,19 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
                 >
                   <button type="button" className="history-item" onClick={() => openSession(session)}>
                     <span className="history-title"><b>{session.title}</b><time>{sessionTime(session.updatedAt)}</time></span>
-                    <span className="history-preview">{lastMessage.replace(/\s+/g, " ").trim().slice(0, 96)}</span>
+                    <span className="history-preview">{lastMessage.replace(/\n/g, " ").slice(0, 42)}</span>
                   </button>
                   <button type="button" className="history-delete" onClick={() => void deleteSession(session)} disabled={deletingSessionId === session.id} aria-label={`${session.title}を削除`} title="この相談ログを削除">{deletingSessionId === session.id ? "…" : "×"}</button>
                 </div>
               );
-            }) : historyLoading ? <p className="history-empty">相談ログを読み込んでいます…</p>
-              : historyLoadFailed ? null
-                : <p className="history-empty">{activeSpecialist.name}との相談を始めると、ここからあとで振り返れます。</p>}
+            }) : <p className="history-empty">{activeSpecialist.name}との相談を始めると、ここからあとで振り返れます。</p>}
+            {historyCursors[specialistId] ? <button type="button" className="history-more" onClick={() => void loadMoreHistory()}>過去のログをさらに表示</button> : null}
           </div>
-          {historyLoadFailed ? (
-            <>
-              <p className="history-retention error">過去の相談を読み込めませんでした。保存済みの内容は残っています。</p>
-              <button type="button" className="history-more" onClick={() => void reloadHistory()} disabled={historyLoading}>
-                {historyLoading ? "読み込み中…" : "もう一度読み込む"}
-              </button>
-            </>
-          ) : (
-            <>
-              <p className={`history-retention ${historySyncState === "error" ? "error" : ""}`}>
-                {historySyncState === "loading" ? "相談履歴を読み込んでいます" : historySyncState === "saving" ? "相談内容を保存中" : historySyncState === "error" ? "この端末には保持しています。再同期してください" : viewer ? "相談内容はいつでも見返せます（アカウント保存）" : "この端末で相談内容を見返せます"}
-              </p>
-              {!viewer && signInAvailable ? <a className="history-signin" href={signInPath}>ログインして端末をまたいで履歴を残す</a> : null}
-              {historySyncState === "error" ? <button type="button" className="history-more" onClick={() => void retryHistorySync()}>相談履歴を再同期</button> : null}
-            </>
-          )}
+          <p className={`history-retention ${historySyncState === "error" ? "error" : ""}`}>
+            {historySyncState === "loading" ? "相談履歴を読み込んでいます" : historySyncState === "saving" ? "相談内容を保存中" : historySyncState === "error" ? "この端末には保持しています。再同期してください" : viewer ? "相談内容はいつでも見返せます（アカウント保存）" : "この端末で相談内容を見返せます"}
+          </p>
+          {!viewer ? <a className="history-signin" href={signInPath}>Googleでログインして端末をまたいで履歴を残す</a> : null}
+          {historySyncState === "error" ? <button type="button" className="history-more" onClick={() => void retryHistorySync()}>相談履歴を再同期</button> : null}
         </div>
         <div className="rail-bottom">強い痛みや腫れなどがある場合は、製品の使用を止めて医療機関へ相談してください。</div>
       </aside>
@@ -1281,17 +1222,15 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
             <button className="utility-button plan-button" onClick={() => setPlanOpen(true)}>今日のプラン</button>
             <button className="utility-button condition-button" onClick={() => setConditionOpen(true)}>今日の調子</button>
             <button className="utility-button shelf-button" onClick={() => setShelfOpen(true)}>マイアイテム{selectedIds.length ? ` ${selectedIds.length}` : ""}</button>
-            {viewer || signInAvailable ? (
-              <a
-                className={`account-button ${viewer ? "signed-in" : ""}`}
-                href={viewer ? signOutPath : signInPath}
-                aria-label={viewer ? `${viewer.displayName}としてログイン中。ログアウトする` : "Googleアカウントでログインする"}
-                title={viewer ? `${viewer.displayName}としてログイン中` : "Googleアカウントでログインして履歴を保存"}
-              >
-                <span className="account-avatar" aria-hidden="true">{viewer ? viewer.displayName.slice(0, 1).toLocaleUpperCase("ja-JP") : "G"}</span>
-                <span className="account-copy"><b>{viewer ? viewer.displayName : "Googleでログイン"}</b><small>{viewer ? "アカウント保存" : "履歴を保存"}</small></span>
-              </a>
-            ) : null}
+            <a
+              className={`account-button ${viewer ? "signed-in" : ""}`}
+              href={viewer ? signOutPath : signInPath}
+              aria-label={viewer ? `${viewer.displayName}としてログイン中。ログアウトする` : "Googleでログインする"}
+              title={viewer ? `${viewer.displayName}としてログイン中` : "Googleでログインして履歴を保存"}
+            >
+              <span className="account-avatar" aria-hidden="true">{viewer ? viewer.displayName.slice(0, 1).toLocaleUpperCase("ja-JP") : "↗"}</span>
+              <span className="account-copy"><b>{viewer ? viewer.displayName : "ログイン"}</b><small>{viewer ? "アカウント保存" : "履歴を保存"}</small></span>
+            </a>
           </div>
         </header>
 
@@ -1366,8 +1305,8 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
               <div className="product-picker">
                 <div className="product-picker-head">
                   <div>
-                    <strong>{inventoryPrompts[specialistId]}</strong>
-                    <small>見つからない場合は、下の入力欄からそのまま伝えても大丈夫です。</small>
+                    <strong>{activeSpecialist.role}の手持ちアイテム</strong>
+                    <small>いつも使っているものを選んでください。見つからない場合は、あとで会話から伝えられます。</small>
                   </div>
                   <span>{selectedIds.length}件選択中</span>
                 </div>
@@ -1431,7 +1370,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
               </div>
             )}
 
-            {!busy && result && stage === "complete" && (
+            {!busy && specialistId === "skin" && stage === "complete" && (
               <div className="result-card">
                 <div className="selection-summary">
                   <div className="selection-check" aria-hidden="true">✓</div>
@@ -1552,15 +1491,15 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
         <div className="composer-wrap">
           <form className="composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
             <input ref={imageInputRef} className="image-input" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => void addImages(event.target.files)} aria-label="写真を追加" />
-            <button className="attach" type="button" onClick={() => imageInputRef.current?.click()} disabled={busy || uploading || pendingImages.length >= 3} aria-label="写真を追加">⌁</button>
+            <button className="attach" type="button" onClick={() => imageInputRef.current?.click()} disabled={busy || uploading || stage === "inventory" || pendingImages.length >= 3} aria-label="写真を追加">⌁</button>
             <input
               aria-label="相談内容"
               value={input}
-              disabled={busy}
+              disabled={busy || stage === "inventory"}
               onChange={(event) => setInput(event.target.value)}
-              placeholder={stage === "complete" ? "気になる点や変えたいことを入力" : stage === "inventory" ? "上の商品から選ぶか、そのまま入力できます" : "気になっていることを入力"}
+              placeholder={stage === "complete" ? "気になる点や変えたいことを入力" : stage === "inventory" ? "上の商品から選んでください" : "気になっていることを入力"}
             />
-            <button className="send" type="submit" disabled={(!input.trim() && !pendingImages.length) || busy || uploading} aria-label="送信">↑</button>
+            <button className="send" type="submit" disabled={(!input.trim() && !pendingImages.length) || busy || uploading || stage === "inventory"} aria-label="送信">↑</button>
           </form>
           {!!pendingImages.length && (
             <div className="pending-images" aria-label="送信予定の画像">
