@@ -43,9 +43,20 @@ ORCAROUTER_API_KEY       # Secret・本番AI会話に必須
 ORCAROUTER_MODEL         # 例: orcarouter/auto
 RAKUTEN_APPLICATION_ID  # 任意
 RAKUTEN_ACCESS_KEY      # 任意
+AUTH_SECRET              # Secret・Auth.jsのセッション暗号化に必須
+AUTH_GOOGLE_ID           # Google OAuthクライアントID
+AUTH_GOOGLE_SECRET       # Google OAuthクライアントSecret
 ```
 
 キーを`NEXT_PUBLIC_`変数、GitHub、`vercel.json`へ書かないでください。PreviewとProductionで別のTurso DB・Blobストアを使うと、本番相談ログへの影響を避けられます。
+
+Google Cloud Consoleでは、Vercelの本番URLに合わせて次のURIをOAuth 2.0クライアントの「承認済みのリダイレクトURI」へ追加します。
+
+```text
+https://YOUR_DOMAIN/api/auth/callback/google
+```
+
+`AUTH_SECRET`はローカルで`npm exec auth secret`を実行して生成し、出力された値だけをVercelのSecretへ登録します。
 
 ## 4. ローカル確認
 
@@ -70,8 +81,9 @@ Git連携ではPRブランチのpushでPreview、`main`へのmergeでProduction�
 ## 確認項目
 
 - トップ画面と5エージェントが表示される
+- `/login`でGoogleログインが開始でき、ログイン後にトップへ戻る
 - OrcaRouterの応答が返る
-- 相談履歴が再読み込み後も残る
+- 全担当の相談履歴がサイドバーに表示され、再読み込み後も残る
 - 画像を送信でき、別の所有者からは取得できない
 - コンディションの保存と削除ができる
 - `ORCAROUTER_API_KEY`などのSecretがブラウザへ露出していない

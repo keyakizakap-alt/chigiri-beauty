@@ -1,4 +1,5 @@
 import { migrateOwnerData } from "@/db";
+import { auth } from "@/auth";
 
 const ownerCookie = "chigiri_owner";
 const guestIdPattern = /^[0-9a-f-]{36}$/i;
@@ -28,7 +29,8 @@ function response(data: unknown, status = 200, clearGuest = false) {
 }
 
 export async function POST(request: Request) {
-  const email = request.headers.get("oai-authenticated-user-email")?.trim().toLowerCase();
+  const session = await auth();
+  const email = session?.user?.email?.trim().toLowerCase();
   if (!email) return response({ error: "ログイン状態を確認できません。" }, 401);
 
   const guestId = cookieValue(request, ownerCookie);

@@ -24,9 +24,10 @@ test("offers five distinct named beauty specialists", () => {
   assert.match(component, /専門家・履歴/);
 });
 
-test("opens each specialist on a fresh chat while keeping history available", () => {
+test("opens each specialist on a fresh chat while keeping all specialist history available", () => {
   assert.match(component, /visibleSessions = useMemo/);
-  assert.match(component, /session\.specialistId === specialistId/);
+  assert.doesNotMatch(component, /sessions\.filter\(\(session\) => session\.specialistId === specialistId\)/);
+  assert.match(component, /history-specialist/);
   assert.doesNotMatch(component, /const latest = \[\.\.\.valid\]/);
   assert.doesNotMatch(component, /const destination = saved\.find/);
   assert.match(component, /setActiveSessionId\(createSessionId\(\)\)/);
@@ -37,9 +38,9 @@ test("opens each specialist on a fresh chat while keeping history available", ()
 });
 
 test("consultation history remains scrollable without being clipped by the rail footer", () => {
-  assert.match(styles, /\.rail \{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*overflow: hidden;/);
-  assert.match(styles, /\.history-panel \{[^}]*min-height: 0;[^}]*flex: 1;/);
-  assert.match(styles, /\.history-list \{[^}]*min-height: 0;[^}]*flex: 1;[^}]*overflow-y: auto;/);
+  assert.match(styles, /\.rail \{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*overflow-y: auto;/);
+  assert.match(styles, /\.history-panel \{[^}]*min-height: 220px;[^}]*flex: 1 0 220px;/);
+  assert.match(styles, /\.history-list \{[^}]*min-height: 104px;[^}]*flex: 1;[^}]*overflow-y: auto;/);
   assert.match(styles, /\.rail-bottom \{[^}]*flex: none;[^}]*margin-top: 12px;/);
   assert.doesNotMatch(styles, /\.history-list \{[^}]*max-height: calc\(100dvh - 560px\)/);
 });
