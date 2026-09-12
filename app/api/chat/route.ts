@@ -1,3 +1,7 @@
+import { consumeChatQuota } from "@/server/chat-quota";
+import { requestOwner, privateJson } from "@/server/request-owner";
+import { validChatBody } from "@/server/request-validation.mjs";
+import { protectMutation } from "@/server/mutation-guard";
 import { createChatReply } from "@/server/orca";
 import { officialProducts } from "@/data/official-products";
 import { ownedUploadDataUrl } from "@/server/upload-store";
@@ -5,7 +9,7 @@ import { ownedUploadDataUrl } from "@/server/upload-store";
 const allowedStages = new Set(["concern", "skin", "inventory", "budget", "complete"]);
 const allowedSpecialists = new Set(["skin", "hair", "body", "makeup", "nail"]);
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   let body: {
     stage?: string;
     specialist?: string;
@@ -28,6 +32,7 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ error: "入力内容を確認してください。" }, { status: 400, headers: { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
   }
+  if (!validChatBody(body)) return Response.json({ error: "入力内容を確認してください。" }, { status: 400 });
   const stage = body.stage ?? "concern";
   const specialist = body.specialist ?? "skin";
   const input = body.input?.trim() ?? "";
@@ -71,6 +76,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "入力内容を確認してください。" }, { status: 400 });
   }
 
+  const owner = await requestOwner(request);
+  if (!await consumeChatQuota(owner.key)) {
+    const response = privateJson({ error: "相談の利用上限に達しました。時間をおいて再試行してください。" }, 429, owner.setCookie);
+    response.headers.set("Retry-After", "60");
+    return response;
+  }
   const reply = await createChatReply(
     stage as "concern" | "skin" | "inventory" | "budget" | "complete",
     specialist as "skin" | "hair" | "body" | "makeup" | "nail",
@@ -81,5 +92,7 @@ export async function POST(request: Request) {
     conditionParts.join("・"),
     memory,
   );
-  return Response.json(reply, { headers: { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
+  return privateJson(reply, 200, owner.setCookie);
 }
+
+export const POST = protectMutation(handlePOST, 131072);

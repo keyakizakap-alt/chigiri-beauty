@@ -29,6 +29,13 @@
       "when": 1786430675697,
       "tag": "0003_skinny_purifiers",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1789222113771,
+      "tag": "0004_release_care_plans",
+      "breakpoints": true
     }
   ]
 }

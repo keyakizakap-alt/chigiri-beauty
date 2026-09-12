@@ -1,3 +1,4 @@
+import { protectMutation } from "@/server/mutation-guard";
 import { and, desc, eq, inArray, or, lt } from "drizzle-orm";
 import { ensureAppStorage, getDb } from "@/db";
 import { chatSessions, deletedChatSessions, uploadedAssets } from "@/db/schema";
@@ -95,11 +96,11 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   const owner = await ownerFor(request);
   let body: { sessions?: unknown[] };
   try { body = await request.json(); } catch { return json({ error: "保存内容を確認できません。" }, 400, owner.setCookie); }
-  if (!Array.isArray(body.sessions) || body.sessions.length < 1 || body.sessions.length > 50) {
+  if (!body || !Array.isArray(body.sessions) || body.sessions.length < 1 || body.sessions.length > 50) {
     return json({ error: "保存できる相談ログは1回につき50件までです。" }, 400, owner.setCookie);
   }
   const sessions = body.sessions.map(validateSession);
@@ -155,7 +156,8 @@ function imageReferences(payloadJson: string) {
         const url = new URL(image.url, "https://app.local");
         const key = url.searchParams.get("key");
         const id = url.searchParams.get("id");
-        if (key?.startsWith("chat-images/")) keys.add(key);
+        // Legacy URLs supplied by the client are never proof of ownership.
+        void key;
         if (id && /^[0-9a-f-]{36}$/i.test(id)) ids.add(id);
       }
     }
@@ -163,7 +165,7 @@ function imageReferences(payloadJson: string) {
   } catch { return { keys: [], ids: [] }; }
 }
 
-export async function DELETE(request: Request) {
+async function handleDELETE(request: Request) {
   const owner = await ownerFor(request);
   const id = new URL(request.url).searchParams.get("id");
   if (!id || !sessionIdPattern.test(id)) return json({ error: "削除する相談ログを確認できません。" }, 400, owner.setCookie);
@@ -195,3 +197,7 @@ export async function DELETE(request: Request) {
     return json({ error: "相談ログを削除できませんでした。" }, 503, owner.setCookie);
   }
 }
+
+export const POST = protectMutation(handlePOST, 1048576);
+
+export const DELETE = protectMutation(handleDELETE, 1048576);

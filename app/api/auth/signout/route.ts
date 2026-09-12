@@ -1,3 +1,4 @@
+import { protectMutation } from "@/server/mutation-guard";
 import { authCookieNames, clearCookieHeader, safeReturnPath } from "@/server/auth";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +10,8 @@ export async function GET(request: Request) {
   return new Response(null, { status: 302, headers });
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   return GET(request);
 }
+
+export const POST = protectMutation(handlePOST, 131072);

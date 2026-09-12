@@ -1,6 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- user-uploaded R2 images use runtime URLs */
 
+import CarePlanTracker from "@/components/CarePlanTracker";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   brandMarkets,
@@ -996,7 +997,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
 
   async function addImages(files: FileList | null) {
     if (!files?.length || busy || uploading) return;
-    const candidates = Array.from(files).slice(0, Math.max(0, 3 - pendingImages.length));
+    const candidates = Array.from(files).slice(0, Math.max(0, 2 - pendingImages.length));
     if (!candidates.length) return;
     const accepted = candidates.filter((file) => ["image/jpeg", "image/png", "image/webp"].includes(file.type) && file.size <= 5 * 1024 * 1024);
     if (accepted.length !== candidates.length) {
@@ -1013,7 +1014,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
         const data = await response.json() as { id: string; url: string; name: string };
         return { id: data.id, url: data.url, name: data.name };
       }));
-      setPendingImages((current) => [...current, ...uploaded].slice(0, 3));
+      setPendingImages((current) => [...current, ...uploaded].slice(0, 2));
     } catch {
       window.alert("画像を追加できませんでした。通信状態を確認して、もう一度お試しください。");
     } finally {
@@ -1552,7 +1553,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
         <div className="composer-wrap">
           <form className="composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
             <input ref={imageInputRef} className="image-input" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => void addImages(event.target.files)} aria-label="写真を追加" />
-            <button className="attach" type="button" onClick={() => imageInputRef.current?.click()} disabled={busy || uploading || pendingImages.length >= 3} aria-label="写真を追加">⌁</button>
+            <button className="attach" type="button" onClick={() => imageInputRef.current?.click()} disabled={busy || uploading || pendingImages.length >= 2} aria-label="写真を追加">⌁</button>
             <input
               aria-label="相談内容"
               value={input}
@@ -1586,6 +1587,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
             <span>記録 {conditions.length}件</span>
             <span>相談 {sessions.filter((session) => session.messages.some((message) => message.role === "user")).length}件</span>
           </div>
+          <CarePlanTracker actions={todayPlan} />
           <div className="daily-actions">
             {todayPlan.map((action, index) => {
               const specialist = specialists.find((item) => item.id === action.specialist) ?? specialists[0];
