@@ -77,7 +77,10 @@ async function handlePOST(request: Request) {
   }
 
   const owner = await requestOwner(request);
-  if (!await consumeChatQuota(owner.key)) {
+  // The local guidance engine has no variable model cost. Keep the public demo
+  // usable when OrcaRouter is intentionally not configured; persisted quotas
+  // remain fail-closed whenever a paid upstream model is enabled.
+  if (process.env.ORCAROUTER_API_KEY?.trim() && !await consumeChatQuota(owner.key)) {
     const response = privateJson({ error: "相談の利用上限に達しました。時間をおいて再試行してください。" }, 429, owner.setCookie);
     response.headers.set("Retry-After", "60");
     return response;
