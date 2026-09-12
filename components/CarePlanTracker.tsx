@@ -35,6 +35,14 @@ export default function CarePlanTracker({ actions, serverSyncRequired }: { actio
   const today = plans.find((plan) => plan.day === day);
 
   async function load() {
+    // Guests never have a server-side owner, so avoid a doomed database request.
+    // This also makes the production preview usable immediately when Turso is not configured.
+    if (!serverSyncRequired) {
+      setPlans(localPlans());
+      setLocalOnly(true);
+      setReady(true);
+      return;
+    }
     try {
       const response = await fetch("/api/care-plans");
       if (!response.ok) throw new Error("server unavailable");
@@ -42,9 +50,7 @@ export default function CarePlanTracker({ actions, serverSyncRequired }: { actio
       setPlans(data.plans ?? []);
       setLocalOnly(false);
     } catch {
-      if (serverSyncRequired) throw new Error("保存したプランを読み込めませんでした。");
-      setPlans(localPlans());
-      setLocalOnly(true);
+      throw new Error("保存したプランを読み込めませんでした。");
     } finally {
       setReady(true);
     }
