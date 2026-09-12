@@ -14,7 +14,7 @@ import {
 } from "@/data/official-products";
 import { productDifference, productInsight } from "@/data/product-insights";
 import { budgetFromText } from "@/server/budget.mjs";
-import { assessConversation, buildLocalReply, suggestedRepliesForAssistant } from "@/server/chat-engine";
+import { assessConversation, buildLocalReply, isProposalRequestTurn, suggestedRepliesForAssistant } from "@/server/chat-engine";
 import type { ProductReviewEvidence, ReviewLinks } from "@/server/review-evidence";
 
 type Stage = "concern" | "skin" | "inventory" | "budget" | "complete";
@@ -158,6 +158,7 @@ const inventoryPrompts: Record<SpecialistId, string> = {
   makeup: "今お持ちのメイク・コスメアイテムは何ですか？ いつも使っているものを選んでください。",
   nail: "今お持ちのネイル・ハンドケアアイテムは何ですか？ いつも使っているものを選んでください。",
 };
+const inventoryContinueReply = "提案を読んで、手持ちを確認する";
 
 const essentialCategories: ProductCategory[] = ["cleanser", "lotion", "moisturizer", "sunscreen"];
 
@@ -382,14 +383,6 @@ function initialMessageFor(specialistId: SpecialistId): Message {
 
 const initialMessage = initialMessageFor("skin");
 
-const stageOrder: Record<Stage, Stage> = {
-  concern: "skin",
-  skin: "inventory",
-  inventory: "budget",
-  budget: "complete",
-  complete: "complete",
-};
-
 function now() {
   return new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit" }).format(new Date());
 }
@@ -566,7 +559,6 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
   const [reviewSource, setReviewSource] = useState<ReviewSource>("lips");
   const [serviceNotice, setServiceNotice] = useState("");
   const imageInputRef = useRef<HTMLInputElement>(null);
-  const endRef = useRef<HTMLDivElement>(null);
   const saveRevisionRef = useRef(0);
 
   useEffect(() => {
@@ -766,10 +758,6 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
     return () => window.clearTimeout(timer);
   }, [activeSessionId, askedContextKeys, budget, conversationFacts, conversationPhase, historyReady, knownContextKeys, messages, selectedIds, specialistId, stage, suggestedReplies]);
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, busy, stage]);
-
   const selectedProducts = useMemo(
     () => products.filter((product) => selectedIds.includes(product.id)),
     [products, selectedIds]
@@ -871,6 +859,11 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
     const value = text.trim();
     const imagesToSend = pendingImages;
     if ((!value && !imagesToSend.length) || busy || uploading) return;
+    if (value === inventoryContinueReply) {
+      setSuggestedReplies([]);
+      setStage("inventory");
+      return;
+    }
     setInput("");
     setPendingImages([]);
     const visibleText = value || "写真を添付しました。";
@@ -916,22 +909,20 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
           askedContextKeys: assessment.askedContextKeys,
         };
       }
-      const userTurnCount = messages.filter((message) => message.role === "user").length + 1;
-      const shouldEnterInventory = stage === "concern"
+      const requestHistory = messages.map(({ role, text }) => ({ role, text })).slice(-60);
+      const shouldOfferInventory = !["inventory", "budget", "complete"].includes(stage)
         && selectedIds.length === 0
-        && userTurnCount >= 2
-        && ["align", "propose"].includes(data.conversationPhase ?? "understand");
-      const nextStage: Stage = shouldEnterInventory
-        ? "inventory"
-        : stage === "inventory"
-          ? specialistId === "skin" ? "budget" : "complete"
-          : specialistId === "skin" && data.conversationPhase === "propose"
+        && (isProposalRequestTurn(value, requestHistory) || /手持ち/.test(value))
+        && ["align", "coach", "propose"].includes(data.conversationPhase ?? "understand");
+      const nextStage: Stage = stage === "inventory"
+        ? specialistId === "skin" ? "budget" : "complete"
+        : stage === "budget"
+          ? "complete"
+          : specialistId === "skin" && selectedIds.length > 0 && data.conversationPhase === "propose"
             ? "complete"
-            : specialistId === "skin" && stage !== "budget" && stage !== "complete"
-              ? stageOrder[stage]
+            : specialistId === "skin" && stage === "concern" && data.conversationPhase !== "listen"
+              ? "skin"
               : stage;
-      // 手持ち確認へ進むときも、生成された返答は差し替えない。手持ちを聞く文言は
-      // ピッカーの見出し（inventoryPrompts）が担当し、質問が二重に並ばないようにする。
       const assistantText = data.text ?? "うまくお返事をまとめられませんでした。少し言い換えて、もう一度送ってもらえますか？";
       setServiceNotice(data.mode === "local-fallback" ? "今は基本のケア案内でお返ししています。詳しいパーソナル提案は、少し時間をおいてお試しください。" : "");
       // 応答が届いてからの固定待ちは、APIがすでに使った時間への上乗せになる。
@@ -950,7 +941,9 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
         },
       ]);
       setConversationPhase(data.conversationPhase ?? "understand");
-      setSuggestedReplies(data.suggestedReplies?.slice(0, 3) ?? []);
+      // 提案文と商品ピッカーを同時に出すと、狭い画面ではピッカーへ視線が飛ぶ。
+      // 返答を読んだあと、本人の操作で次へ進む一段階を置く。
+      setSuggestedReplies(shouldOfferInventory ? [inventoryContinueReply] : data.suggestedReplies?.slice(0, 3) ?? []);
       setConversationFacts(data.conversationFacts?.slice(0, 20) ?? conversationFacts);
       setKnownContextKeys(data.knownContextKeys?.slice(0, 12) ?? knownContextKeys);
       setAskedContextKeys(data.askedContextKeys?.slice(0, 12) ?? askedContextKeys);
@@ -1619,7 +1612,6 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
                 </div>
               </div>
             )}
-            <div ref={endRef} />
           </div>
         </div>
 
