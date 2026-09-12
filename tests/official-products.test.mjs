@@ -144,6 +144,18 @@ test("chat history can be opened and closed from the mobile header", async () =>
   assert.match(styles, /\.history-backdrop\.visible/);
 });
 
+test("mobile controls remain balanced and clear of fixed UI", async () => {
+  const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
+  assert.match(layout, /viewportFit: "cover"/);
+  assert.match(styles, /\.condition-button \{ display: block; \}/);
+  assert.match(styles, /\.utility-button \{[^}]*flex: 1 1 0;/);
+  assert.match(styles, /\.conversation \{[^}]*env\(safe-area-inset-bottom\)/);
+  assert.match(styles, /\.composer-wrap \{[^}]*env\(safe-area-inset-bottom\)/);
+  assert.match(styles, /\.bubble \{[^}]*max-width: calc\(100% - 46px\);/);
+  assert.doesNotMatch(styles, /\.condition-button \{ display: none; \}/);
+});
+
 test("chat supports safe image attachment and a removable preview", async () => {
   const component = await readFile(new URL("../components/ChigiriApp.tsx", import.meta.url), "utf8");
   const uploadRoute = await readFile(new URL("../app/api/uploads/route.ts", import.meta.url), "utf8");
