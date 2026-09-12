@@ -271,6 +271,27 @@ function selectBestFromTopThree(plans: ChigiriPlan[], selectedProductCount: numb
 const chatStorageKey = "chigiri-specialist-sessions-v4";
 const historyCacheKey = "chigiri-consultation-cache-v1";
 const historyOutboxKey = "chigiri-consultation-outbox-v1";
+const conditionCacheKey = "chigiri-condition-cache-v1";
+
+function storedConditions() {
+  try {
+    const value = JSON.parse(localStorage.getItem(conditionCacheKey) ?? "[]") as unknown;
+    if (!Array.isArray(value)) return [];
+    return value.filter((entry): entry is ConditionEntry => Boolean(
+      entry
+      && typeof entry === "object"
+      && typeof (entry as ConditionEntry).id === "string"
+      && typeof (entry as ConditionEntry).specialistId === "string"
+      && typeof (entry as ConditionEntry).recordedAt === "string"
+    ));
+  } catch {
+    return [];
+  }
+}
+
+function storeConditions(entries: ConditionEntry[]) {
+  try { localStorage.setItem(conditionCacheKey, JSON.stringify(entries)); } catch { /* storage can be unavailable */ }
+}
 
 function storedSessions(key: string) {
   try {
@@ -614,9 +635,15 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
     if (!historyReady) return;
     fetch("/api/check-ins")
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("load failed")))
-      .then((data: { entries?: ConditionEntry[] }) => setConditions(data.entries ?? []))
-      .catch(() => undefined);
-  }, [historyReady]);
+      .then((data: { entries?: ConditionEntry[] }) => {
+        const entries = data.entries ?? [];
+        setConditions(entries);
+        storeConditions(entries);
+      })
+      .catch(() => {
+        if (!viewer) setConditions(storedConditions());
+      });
+  }, [historyReady, viewer]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -665,7 +692,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
             setHistoryLoadFailed(false);
           } catch {
             // 読み込みに失敗しても、この端末に残っている分は表示したままにする。
-            setHistoryLoadFailed(true);
+            setHistoryLoadFailed(Boolean(viewer));
           } finally {
             setHistoryLoading(false);
           }
@@ -680,7 +707,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
             if (currentSource) localStorage.removeItem(chatStorageKey);
             setHistorySyncState("saved");
           } catch {
-            setHistorySyncState("error");
+            setHistorySyncState(viewer ? "error" : "saved");
           }
           // Keep past consultations available, but always open on a fresh chat.
           // A previous conversation resumes only when the user selects it.
@@ -975,12 +1002,27 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
         body: JSON.stringify(entry),
       });
       if (!response.ok) throw new Error("save failed");
-      setConditions((current) => [entry, ...current]);
+      setConditions((current) => {
+        const next = [entry, ...current];
+        storeConditions(next);
+        return next;
+      });
       setWeatherDraft({});
       setSleepDraft("");
       setNoteDraft("");
     } catch {
-      window.alert("今日のコンディションを保存できませんでした。もう一度お試しください。");
+      if (viewer) {
+        window.alert("今日のコンディションを保存できませんでした。もう一度お試しください。");
+        return;
+      }
+      setConditions((current) => {
+        const next = [entry, ...current];
+        storeConditions(next);
+        return next;
+      });
+      setWeatherDraft({});
+      setSleepDraft("");
+      setNoteDraft("");
     }
   }
 
@@ -989,9 +1031,21 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
     try {
       const response = await fetch(`/api/check-ins?id=${encodeURIComponent(id)}`, { method: "DELETE" });
       if (!response.ok) throw new Error("delete failed");
-      setConditions((current) => current.filter((entry) => entry.id !== id));
+      setConditions((current) => {
+        const next = current.filter((entry) => entry.id !== id);
+        storeConditions(next);
+        return next;
+      });
     } catch {
-      window.alert("記録を削除できませんでした。もう一度お試しください。");
+      if (viewer) {
+        window.alert("記録を削除できませんでした。もう一度お試しください。");
+        return;
+      }
+      setConditions((current) => {
+        const next = current.filter((entry) => entry.id !== id);
+        storeConditions(next);
+        return next;
+      });
     }
   }
 
@@ -1587,7 +1641,7 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
             <span>記録 {conditions.length}件</span>
             <span>相談 {sessions.filter((session) => session.messages.some((message) => message.role === "user")).length}件</span>
           </div>
-          <CarePlanTracker actions={todayPlan} />
+          <CarePlanTracker actions={todayPlan} serverSyncRequired={Boolean(viewer)} />
           <div className="daily-actions">
             {todayPlan.map((action, index) => {
               const specialist = specialists.find((item) => item.id === action.specialist) ?? specialists[0];
