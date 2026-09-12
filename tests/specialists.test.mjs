@@ -296,8 +296,13 @@ test("inventory selection uses one matching question for every specialist", () =
   assert.match(component, /<strong>\{inventoryPrompts\[specialistId\]\}<\/strong>/);
   assert.doesNotMatch(component, /disabled=\{busy \|\| stage === "inventory"\}/);
 
-  assert.match(component, /\["align", "propose"\]\.includes/);
-  assert.doesNotMatch(component, /\["understand", "align", "propose"\]\.includes/);
+  assert.match(component, /shouldOfferInventory/);
+  assert.match(component, /isProposalRequestTurn\(value, requestHistory\)/);
+  assert.match(component, /inventoryContinueReply/);
+  assert.match(component, /setStage\("inventory"\)/);
+  assert.doesNotMatch(component, /shouldEnterInventory/);
+  assert.doesNotMatch(component, /stageOrder/);
+  assert.doesNotMatch(component, /scrollIntoView/);
   assert.match(component, /productSpecialistOf\(product\) === specialistId/);
   assert.doesNotMatch(component, /specialistId === "skin" && stage === "inventory"/);
 });
