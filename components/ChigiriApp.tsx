@@ -14,6 +14,7 @@ import {
 } from "@/data/official-products";
 import { productDifference, productInsight } from "@/data/product-insights";
 import { budgetFromText } from "@/server/budget.mjs";
+import { assessConversation, buildLocalReply, suggestedRepliesForAssistant } from "@/server/chat-engine";
 import type { ProductReviewEvidence, ReviewLinks } from "@/server/review-evidence";
 
 type Stage = "concern" | "skin" | "inventory" | "budget" | "complete";
@@ -896,7 +897,25 @@ export default function ChigiriApp({ viewer, signInPath, signOutPath, signInAvai
           },
         }),
       });
-      const data = (await response.json()) as { text?: string; recommendedProducts?: VerifiedProduct[]; recommendationReviews?: ProductReviewEvidence[]; conversationPhase?: ConversationPhase; suggestedReplies?: string[]; conversationFacts?: string[]; knownContextKeys?: string[]; askedContextKeys?: string[]; mode?: string };
+      let data = (await response.json().catch(() => ({}))) as { text?: string; recommendedProducts?: VerifiedProduct[]; recommendationReviews?: ProductReviewEvidence[]; conversationPhase?: ConversationPhase; suggestedReplies?: string[]; conversationFacts?: string[]; knownContextKeys?: string[]; askedContextKeys?: string[]; mode?: string };
+      // A missing production integration must not turn a simple beauty question into
+      // a dead end. This deterministic fallback contains no diagnosis and exposes no
+      // secrets; personalized model output and product evidence remain server-owned.
+      if (!response.ok || !data.text?.trim()) {
+        const fallbackHistory = messages.map(({ role, text }) => ({ role, text })).slice(-60);
+        const fallbackMemory = { knownKeys: knownContextKeys, askedKeys: askedContextKeys };
+        const assessment = assessConversation(specialistId, visibleText, fallbackHistory, fallbackMemory);
+        const text = buildLocalReply(stage, visibleText, specialistId, fallbackHistory, [], selectedProducts, "", fallbackMemory, []);
+        data = {
+          text,
+          mode: "local-fallback",
+          conversationPhase: assessment.phase,
+          suggestedReplies: suggestedRepliesForAssistant(specialistId, text, assessment.phase),
+          conversationFacts: assessment.factSummary,
+          knownContextKeys: assessment.knownContextKeys,
+          askedContextKeys: assessment.askedContextKeys,
+        };
+      }
       const userTurnCount = messages.filter((message) => message.role === "user").length + 1;
       const shouldEnterInventory = stage === "concern"
         && selectedIds.length === 0
