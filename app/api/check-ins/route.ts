@@ -1,3 +1,4 @@
+import { protectMutation } from "@/server/mutation-guard";
 import { and, desc, eq } from "drizzle-orm";
 import { ensureAppStorage, getDb } from "@/db";
 import { beautyCheckIns } from "@/db/schema";
@@ -62,7 +63,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   const owner = await ownerFor(request);
   let body: unknown;
   try { body = await request.json(); } catch { return json({ error: "記録内容を確認できません。" }, 400, owner.setCookie); }
@@ -87,7 +88,7 @@ export async function POST(request: Request) {
   }
 }
 
-export async function DELETE(request: Request) {
+async function handleDELETE(request: Request) {
   const owner = await ownerFor(request);
   const id = new URL(request.url).searchParams.get("id");
   if (!id || !idPattern.test(id)) return json({ error: "削除する記録を確認できません。" }, 400, owner.setCookie);
@@ -100,3 +101,7 @@ export async function DELETE(request: Request) {
     return json({ error: "記録を削除できませんでした。" }, 503, owner.setCookie);
   }
 }
+
+export const POST = protectMutation(handlePOST, 131072);
+
+export const DELETE = protectMutation(handleDELETE, 131072);

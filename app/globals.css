@@ -501,3 +501,17 @@ button { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+.care-tracker { margin: 20px 0; padding: 20px; border: 1px solid #ded5e8; border-radius: 20px; background: #faf7fc; color: #30283a; }
+.care-tracker h3 { font-size: 19px; margin: 0 0 10px; }
+.care-tracker p, .care-tracker small { font-size: 13px; line-height: 1.8; }
+.care-tracker button { min-height: 44px; padding: 10px 14px; border-radius: 12px; border: 1px solid #bbaacb; background: white; color: #40304f; cursor: pointer; }
+.care-tracker button:disabled { opacity: .55; cursor: wait; }
+.care-tracker [role=alert] { color: #9c283d; }
+.care-task { display: flex; gap: 12px; align-items: flex-start; padding: 14px 0; border-bottom: 1px solid #e4dce9; cursor: pointer; }
+.care-task input { width: 22px; height: 22px; margin-top: 4px; flex-shrink: 0; accent-color: #78618e; }
+.care-task strong, .care-task small { display: block; overflow-wrap: anywhere; }
+.care-tracker details { margin: 16px 0; }
+.care-tracker summary { cursor: pointer; padding: 12px 0; }
+.care-tracker article { padding: 14px 0; border-bottom: 1px solid #e4dce9; }
+.care-tracker :focus-visible { outline: 3px solid #78618e; outline-offset: 3px; }

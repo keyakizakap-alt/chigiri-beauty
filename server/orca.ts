@@ -170,6 +170,7 @@ export async function createChatReply(
   try {
     const response = await fetch("https://api.orcarouter.ai/v1/chat/completions", {
       method: "POST",
+      signal: AbortSignal.timeout(25_000),
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",

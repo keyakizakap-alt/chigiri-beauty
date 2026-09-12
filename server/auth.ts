@@ -47,7 +47,8 @@ function googleClientSecret() {
 function sessionSecret() {
   // 署名鍵が無いままセッションを発行すると、Cookieを書き換えるだけで
   // 他人の相談ログを開ける状態になる。鍵が無い場合はログイン機能ごと無効にする。
-  return process.env.AUTH_SECRET?.trim() ?? "";
+  const secret = process.env.AUTH_SECRET?.trim() ?? "";
+  return secret.length >= 32 ? secret : "";
 }
 
 /** ログイン導線を出してよいか。設定不足のまま導線だけ見せると、押しても失敗する。 */
@@ -59,7 +60,7 @@ export function cookieValue(request: Request, name: string) {
   const cookies = request.headers.get("cookie") ?? "";
   for (const item of cookies.split(";")) {
     const [key, ...value] = item.trim().split("=");
-    if (key === name) return decodeURIComponent(value.join("="));
+    if (key === name) return safeDecode(value.join("="));
   }
   return null;
 }
@@ -127,6 +128,7 @@ export async function createSessionCookie(email: string, name: string | null) {
 
 async function readSession(value: string | null): Promise<SessionPayload | null> {
   if (!value || !sessionSecret()) return null;
+  if (value.split(".").length !== 2) return null;
   const [body, signature] = value.split(".");
   if (!body || !signature) return null;
   try {
@@ -160,6 +162,7 @@ export async function viewerFromRequest(request: Request): Promise<Viewer | null
 
 /** SIWC（ChatGPT Sites）が注入する識別ヘッダーからの利用者。Vercelでは通常存在しない。 */
 export function viewerFromHeaders(requestHeaders: Headers): Viewer | null {
+  if (!trustedPlatformAuthEnabled()) return null;
   const email = requestHeaders.get("oai-authenticated-user-email")?.trim();
   if (!email) return null;
   const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
@@ -296,4 +299,9 @@ export function readIdTokenClaims(idToken: string, expectedAudience: string): Go
   } catch {
     return null;
   }
+}
+
+/** Only enable behind a gateway that strips client-supplied identity headers. */
+export function trustedPlatformAuthEnabled() {
+  return process.env.TRUST_PLATFORM_AUTH_HEADERS === "true" && process.env.VERCEL !== "1";
 }

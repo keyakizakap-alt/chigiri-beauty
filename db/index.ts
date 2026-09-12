@@ -37,6 +37,8 @@ export async function ensureAppStorage() {
     appStorageReady = (async () => {
       const db = await getDb();
       const statements = [
+        `CREATE TABLE IF NOT EXISTS api_quotas (key text PRIMARY KEY NOT NULL, window integer NOT NULL, used integer NOT NULL)`,
+        `CREATE TABLE IF NOT EXISTS care_plans (owner_key text NOT NULL, day text NOT NULL, payload_json text NOT NULL, revision integer NOT NULL DEFAULT 1, PRIMARY KEY(owner_key, day))`,
         `CREATE TABLE IF NOT EXISTS chat_sessions (
           owner_key text NOT NULL,
           id text NOT NULL,
@@ -88,7 +90,7 @@ export async function ensureAppStorage() {
 export async function migrateOwnerData(guestKey: string, userKey: string) {
   await ensureAppStorage();
   const db = await getDb();
-  const tables = ["chat_sessions", "deleted_chat_sessions", "beauty_check_ins", "uploaded_assets"];
+  const tables = ["chat_sessions", "deleted_chat_sessions", "beauty_check_ins", "uploaded_assets", "care_plans"];
   await db.transaction(async (tx) => {
     for (const table of tables) {
       const tableName = sql.raw(table);

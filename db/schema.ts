@@ -73,3 +73,15 @@ export const uploadedAssets = sqliteTable("uploaded_assets", {
   primaryKey({ columns: [table.ownerKey, table.id] }),
   index("uploaded_assets_owner_created_idx").on(table.ownerKey, table.createdAt),
 ]);
+
+export const apiQuotas = sqliteTable("api_quotas", {
+  key: text("key").primaryKey(),
+  window: integer("window").notNull(),
+  used: integer("used").notNull(),
+});
+export const carePlans = sqliteTable("care_plans", {
+  ownerKey: text("owner_key").notNull(),
+  day: text("day").notNull(),
+  payloadJson: text("payload_json").notNull(),
+  revision: integer("revision").notNull().default(1),
+}, table => [primaryKey({columns: [table.ownerKey, table.day]})]);

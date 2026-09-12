@@ -1,3 +1,4 @@
+import { protectMutation } from "@/server/mutation-guard";
 import { migrateOwnerData } from "@/db";
 import { authenticatedEmail, cookieValue } from "@/server/auth";
 
@@ -19,7 +20,7 @@ function response(data: unknown, status = 200, clearGuest = false) {
   return new Response(JSON.stringify(data), { status, headers });
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   // 署名済みセッション（Googleログイン）か、SIWCの `oai-authenticated-user-email`
   // ヘッダーで本人確認できた場合だけ、端末のゲストデータをアカウントへ移す。
   const email = await authenticatedEmail(request);
@@ -38,3 +39,5 @@ export async function POST(request: Request) {
     return response({ error: "端末内の相談データをアカウントへ移行できませんでした。" }, 503);
   }
 }
+
+export const POST = protectMutation(handlePOST, 131072);

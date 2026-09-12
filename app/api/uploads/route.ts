@@ -1,6 +1,8 @@
+import { protectMutation } from "@/server/mutation-guard";
+import { validImageSignature } from "@/server/request-validation.mjs";
 import { and, eq } from "drizzle-orm";
 import { ensureAppStorage, getDb } from "@/db";
-import { chatSessions, uploadedAssets } from "@/db/schema";
+import { uploadedAssets } from "@/db/schema";
 import { deletePrivateImages, getPrivateImage, putPrivateImage } from "@/server/blob-store";
 import { privateJson, requestOwner } from "@/server/request-owner";
 
@@ -12,13 +14,16 @@ function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80) || "image";
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   const owner = await requestOwner(request);
   try {
     const form = await request.formData();
     const image = form.get("image");
     if (!(image instanceof File) || !allowedTypes.has(image.type) || image.size <= 0 || image.size > maxBytes) {
       return privateJson({ error: "JPEG・PNG・WebP形式で、5MB以下の画像を選択してください。" }, 400, owner.setCookie);
+    }
+    if (!validImageSignature(new Uint8Array(await image.slice(0, 16).arrayBuffer()), image.type)) {
+      return privateJson({ error: "画像の形式を確認できません。" }, 400, owner.setCookie);
     }
     const id = crypto.randomUUID();
     const fileName = safeFileName(image.name);
@@ -62,20 +67,6 @@ export async function GET(request: Request) {
         .where(and(eq(uploadedAssets.ownerKey, owner.key), eq(uploadedAssets.id, id)))
         .limit(1);
       objectKey = rows[0]?.objectKey ?? null;
-    } else if (legacyKey) {
-      const sessions = await db.select({ payloadJson: chatSessions.payloadJson })
-        .from(chatSessions)
-        .where(eq(chatSessions.ownerKey, owner.key));
-      const owned = sessions.some((session) => {
-        try {
-          const payload = JSON.parse(session.payloadJson) as { messages?: Array<{ images?: Array<{ url?: string }> }> };
-          return (payload.messages ?? []).some((message) => (message.images ?? []).some((image) => {
-            if (!image.url?.startsWith("/api/uploads?")) return false;
-            return new URL(image.url, "https://app.local").searchParams.get("key") === legacyKey;
-          }));
-        } catch { return false; }
-      });
-      if (owned) objectKey = legacyKey;
     }
     if (!objectKey) return new Response("Not found", { status: 404 });
     const object = await getPrivateImage(objectKey);
@@ -90,7 +81,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function DELETE(request: Request) {
+async function handleDELETE(request: Request) {
   const owner = await requestOwner(request);
   const id = new URL(request.url).searchParams.get("id");
   if (!id || !idPattern.test(id)) return privateJson({ error: "削除する画像を確認できません。" }, 400, owner.setCookie);
@@ -109,3 +100,7 @@ export async function DELETE(request: Request) {
     return privateJson({ error: "画像を削除できませんでした。" }, 503, owner.setCookie);
   }
 }
+
+export const POST = protectMutation(handlePOST, 6291456);
+
+export const DELETE = protectMutation(handleDELETE, 6291456);
