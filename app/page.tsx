@@ -13,7 +13,7 @@ export default async function Home() {
   return (
     <ChigiriApp
       viewer={viewer ? { displayName: viewer.displayName } : null}
-      signInPath={signInPath("/")}
+      signInPath={googleAuthConfigured() ? "/login" : signInPath("/")}
       signOutPath={signOutPath("/")}
       signInAvailable={googleAuthConfigured()}
     />
